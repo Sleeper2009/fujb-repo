@@ -31,15 +31,11 @@ static void LMLog(NSString *format, ...) {
     NSLog(@"[LiquidMorph] %@", message);
 }
 
-// Tao path bo goc tai 1 rect + ban kinh cho truoc.
 static UIBezierPath *LMRoundedPath(CGRect rect, CGFloat radius) {
     if (radius < 0) radius = 0;
     return [UIBezierPath bezierPathWithRoundedRect:rect cornerRadius:radius];
 }
 
-// Ve overlay morph tu iconFrame (nho, bo goc nhieu) den fullscreen (bo goc it),
-// co overshoot nhe roi settle - chi la lop test hien thi, chua thay the
-// transition that cua he thong.
 static void LMPlayMorphOverlay(CGRect iconFrame) {
     UIWindow *window = nil;
     for (UIWindow *w in [UIApplication sharedApplication].windows) {
@@ -56,8 +52,6 @@ static void LMPlayMorphOverlay(CGRect iconFrame) {
     shape.zPosition = 9999;
     [window.layer addSublayer:shape];
 
-    // Cac keyframe: [tien do 0..1, rect, ban kinh bo goc]
-    // Kich thuoc overshoot nhe o frame giua (~70%) truoc khi settle ve full.
     NSInteger steps = 10;
     NSMutableArray *paths = [NSMutableArray array];
 
@@ -67,12 +61,11 @@ static void LMPlayMorphOverlay(CGRect iconFrame) {
     for (NSInteger i = 0; i <= steps; i++) {
         CGFloat t = (CGFloat)i / (CGFloat)steps;
 
-        // Easing rieng cho size: bat dau nhanh, overshoot nhe qua fullscreen roi tro lai.
         CGFloat sizeT = t;
         CGFloat overshoot = 0.0;
         if (t > 0.6 && t < 1.0) {
-            CGFloat local = (t - 0.6) / 0.4; // 0..1 trong doan overshoot
-            overshoot = sinf(local * M_PI) * 0.04; // phinh ra toi da 4%
+            CGFloat local = (t - 0.6) / 0.4;
+            overshoot = sinf(local * M_PI) * 0.04;
         }
 
         CGFloat x = iconFrame.origin.x + (screenBounds.origin.x - iconFrame.origin.x) * sizeT;
@@ -82,12 +75,10 @@ static void LMPlayMorphOverlay(CGRect iconFrame) {
 
         CGRect frame = CGRectMake(x, y, w, h);
 
-        // Ban kinh bo goc giam CHAM hon size luc dau, roi rot nhanh ve cuoi
-        // (giong hieu ung trong anh - goc van con bo ro khi kich thuoc da gan full).
         CGFloat radiusT = powf(t, 2.2);
         CGFloat radius = startRadius + (endRadius - startRadius) * radiusT;
 
-        [paths addObject:(id)LMRoundedPath(frame, radius).CGPath];
+        [paths addObject:(__bridge id)LMRoundedPath(frame, radius).CGPath];
     }
 
     CAKeyframeAnimation *anim = [CAKeyframeAnimation animationWithKeyPath:@"path"];
@@ -97,7 +88,7 @@ static void LMPlayMorphOverlay(CGRect iconFrame) {
     anim.fillMode = kCAFillModeForwards;
     anim.removedOnCompletion = NO;
 
-    shape.path = (CGPathRef)paths.lastObject;
+    shape.path = (__bridge CGPathRef)paths.lastObject;
     [shape addAnimation:anim forKey:@"morph"];
 
     LMLog(@"Morph overlay played | from: %@ to: %@", NSStringFromCGRect(iconFrame), NSStringFromCGRect(screenBounds));
