@@ -30,40 +30,52 @@ static void LMLog(NSString *format, ...) {
     NSLog(@"[LiquidMorph] %@", message);
 }
 
-// Liet ke toan bo method cua 1 class, chi ghi ra nhung ten co chua tu khoa
-// can tim (vd "tap", "launch", "invoke") de khong bi qua dai.
-static void LMDumpMethods(NSString *className, NSString *keyword) {
-    Class cls = NSClassFromString(className);
-    if (!cls) {
-        LMLog(@"[dump] Class not found: %@", className);
-        return;
-    }
-    unsigned int count = 0;
-    Method *methods = class_copyMethodList(cls, &count);
-    LMLog(@"[dump] ---- %@ (%u methods) chua '%@' ----", className, count, keyword);
-    for (unsigned int i = 0; i < count; i++) {
-        SEL sel = method_getName(methods[i]);
-        NSString *name = NSStringFromSelector(sel);
-        if ([name.lowercaseString containsString:keyword.lowercaseString]) {
-            LMLog(@"[dump] %@ -> %@", className, name);
+@interface SBIconView : UIView
+- (id)icon;
+@end
+
+@interface SBIcon : NSObject
+- (NSString *)displayName;
+@end
+
+%hook SBIconView
+
+- (void)_handleTap {
+    @try {
+        id icon = [self valueForKey:@"icon"];
+        NSString *name = @"unknown";
+        if (icon && [icon respondsToSelector:@selector(displayName)]) {
+            name = [icon performSelector:@selector(displayName)] ?: @"unknown";
         }
+        LMLog(@"_handleTap fired | icon: %@", name);
+    } @catch (NSException *e) {
+        LMLog(@"Exception in _handleTap: %@", e.reason);
     }
-    free(methods);
+    %orig;
 }
+
+%end
+
+%hook SBIconController
+
+- (void)iconManager:(id)manager launchIcon:(id)icon location:(CGPoint)location animated:(BOOL)animated completionHandler:(id)handler {
+    @try {
+        NSString *name = @"unknown";
+        if (icon && [icon respondsToSelector:@selector(displayName)]) {
+            name = [icon performSelector:@selector(displayName)] ?: @"unknown";
+        }
+        LMLog(@"launchIcon fired | icon: %@ | location: (%.1f, %.1f) | animated: %d",
+              name, location.x, location.y, animated);
+    } @catch (NSException *e) {
+        LMLog(@"Exception in launchIcon hook: %@", e.reason);
+    }
+    %orig;
+}
+
+%end
 
 %ctor {
     LMLog(@"=== LiquidMorph loaded | process: %@ | iOS %@ ===",
           [[NSProcessInfo processInfo] processName],
           [[UIDevice currentDevice] systemVersion]);
-
-    NSArray *classesToScan = @[@"SBIconController", @"SBIconView", @"SBIconViewMap", @"SBHomeScreenView"];
-    NSArray *keywords = @[@"tap", @"launch", @"invoke", @"activat"];
-
-    for (NSString *cls in classesToScan) {
-        for (NSString *kw in keywords) {
-            LMDumpMethods(cls, kw);
-        }
-    }
-
-    LMLog(@"=== Dump xong ===");
 }
