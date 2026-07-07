@@ -1,9 +1,5 @@
 #import <UIKit/UIKit.h>
 
-// ---------------------------------------------------------------------
-// Log file: /var/mobile/Documents/ - mo truc tiep bang Filza, khong can
-// biet duong dan jbroot.
-// ---------------------------------------------------------------------
 static NSString *const kLogPath = @"/var/mobile/Documents/LiquidMorph.log";
 
 static void LMLog(NSString *format, ...) {
@@ -34,31 +30,28 @@ static void LMLog(NSString *format, ...) {
     NSLog(@"[LiquidMorph] %@", message);
 }
 
+@interface SBIconView : UIView
+@end
+
+@interface SBIconController : NSObject
+- (BOOL)iconShouldAllowTap:(SBIconView *)iconView;
+@end
+
+%hook SBIconController
+
+- (BOOL)iconShouldAllowTap:(SBIconView *)iconView {
+    @try {
+        LMLog(@"iconShouldAllowTap fired | iconView class: %@", NSStringFromClass([iconView class]));
+    } @catch (NSException *e) {
+        LMLog(@"Exception in iconShouldAllowTap: %@", e.reason);
+    }
+    return %orig;
+}
+
+%end
+
 %ctor {
     LMLog(@"=== LiquidMorph loaded into process: %@ | iOS %@ ===",
           [[NSProcessInfo processInfo] processName],
           [[UIDevice currentDevice] systemVersion]);
-
-    NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
-
-    // Dang ky nhieu ten notification khac nhau cung luc de do xem
-    // ten nao thuc su ban ra tren ban iOS ban dang chay.
-    NSArray *names = @[
-        @"SBApplicationDidLaunchNotification",
-        @"SBApplicationDidTerminateNotification",
-        @"FBApplicationProcessStateDidChangeNotification",
-        @"SBAppSwitcherDidLaunchApplicationNotification",
-        @"SBSuspendUserForegroundApplicationsNotification",
-        @"FBSceneDidActivateNotification",
-        @"FBSceneDidDeactivateNotification"
-    ];
-
-    for (NSString *name in names) {
-        [center addObserverForName:name
-                             object:nil
-                              queue:nil
-                         usingBlock:^(NSNotification *note) {
-            LMLog(@"Notification fired: %@ | object: %@", name, note.object);
-        }];
-    }
 }
