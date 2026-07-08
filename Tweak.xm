@@ -116,7 +116,7 @@ static void LMPlayMorphOverlay(CGRect iconFrame) {
 
     NSInteger steps = 20;
     NSMutableArray *paths = [NSMutableArray array];
-    CGFloat startRadius = 45.0;
+    CGFloat startRadius = 80.0;
     CGFloat maxDelay = 0.45;
 
     CGFloat iconLeft = iconFrame.origin.x;
