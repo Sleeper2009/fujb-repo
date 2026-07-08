@@ -94,7 +94,6 @@ static void LMPlayMorphOverlay(CGRect iconFrame) {
                 }
             }
         }
-
         gOverlayWindow.hidden = NO;
     }
 
@@ -102,6 +101,7 @@ static void LMPlayMorphOverlay(CGRect iconFrame) {
     CGFloat iconCenterXNorm = (iconFrame.origin.x + iconFrame.size.width / 2.0) / screen.size.width;
     CGFloat iconCenterYNorm = (iconFrame.origin.y + iconFrame.size.height / 2.0) / screen.size.height;
 
+    // closeness: 1 = sat canh do, 0 = sat canh doi dien
     CGFloat closeBottom = iconCenterYNorm;
     CGFloat closeTop = 1.0 - iconCenterYNorm;
     CGFloat closeRight = iconCenterXNorm;
@@ -114,35 +114,51 @@ static void LMPlayMorphOverlay(CGRect iconFrame) {
     shape.frame = screen;
     [gOverlayWindow.layer addSublayer:shape];
 
-    NSInteger steps = 16;
+    NSInteger steps = 20;
     NSMutableArray *paths = [NSMutableArray array];
     CGFloat startRadius = 22.0;
-    CGFloat maxDelay = 0.4;
+    CGFloat maxDelay = 0.45;
+
+    CGFloat iconLeft = iconFrame.origin.x;
+    CGFloat iconRight = iconFrame.origin.x + iconFrame.size.width;
+    CGFloat iconTop = iconFrame.origin.y;
+    CGFloat iconBottom = iconFrame.origin.y + iconFrame.size.height;
+
+    CGFloat screenLeft = screen.origin.x;
+    CGFloat screenRight = screen.origin.x + screen.size.width;
+    CGFloat screenTop = screen.origin.y;
+    CGFloat screenBottom = screen.origin.y + screen.size.height;
 
     for (NSInteger i = 0; i <= steps; i++) {
         CGFloat t = (CGFloat)i / (CGFloat)steps;
 
-        CGFloat tTop = LMEdgeProgress(t, closeTop, maxDelay);
-        CGFloat tBottom = LMEdgeProgress(t, closeBottom, maxDelay);
-        CGFloat tLeft = LMEdgeProgress(t, closeLeft, maxDelay);
-        CGFloat tRight = LMEdgeProgress(t, closeRight, maxDelay);
+        // Tien do rieng cho tung canh (tren/duoi/trai/phai)
+        CGFloat topP = LMEdgeProgress(t, closeTop, maxDelay);
+        CGFloat bottomP = LMEdgeProgress(t, closeBottom, maxDelay);
+        CGFloat leftP = LMEdgeProgress(t, closeLeft, maxDelay);
+        CGFloat rightP = LMEdgeProgress(t, closeRight, maxDelay);
 
-        CGFloat topY = iconFrame.origin.y + (screen.origin.y - iconFrame.origin.y) * tTop;
-        CGFloat bottomY = (iconFrame.origin.y + iconFrame.size.height) +
-                           ((screen.origin.y + screen.size.height) - (iconFrame.origin.y + iconFrame.size.height)) * tBottom;
-        CGFloat leftX = iconFrame.origin.x + (screen.origin.x - iconFrame.origin.x) * tLeft;
-        CGFloat rightX = (iconFrame.origin.x + iconFrame.size.width) +
-                          ((screen.origin.x + screen.size.width) - (iconFrame.origin.x + iconFrame.size.width)) * tRight;
+        // Y cua canh tren/duoi phu thuoc DUNG tien do cua canh do
+        CGFloat topY = iconTop + (screenTop - iconTop) * topP;
+        CGFloat bottomY = iconBottom + (screenBottom - iconBottom) * bottomP;
 
-        CGPoint tl = CGPointMake(leftX, topY);
-        CGPoint tr = CGPointMake(rightX, topY);
-        CGPoint br = CGPointMake(rightX, bottomY);
-        CGPoint bl = CGPointMake(leftX, bottomY);
+        // QUAN TRONG: X cua moi goc phu thuoc CA tien do canh ngang (tren/duoi)
+        // LAN tien do canh doc (trai/phai) - day la thu tao ra hinh thang that,
+        // khac voi ban truoc dung chung 1 leftX/rightX cho ca 2 canh.
+        CGFloat topLeftX = iconLeft + (screenLeft - iconLeft) * ((topP + leftP) * 0.5);
+        CGFloat topRightX = iconRight + (screenRight - iconRight) * ((topP + rightP) * 0.5);
+        CGFloat bottomLeftX = iconLeft + (screenLeft - iconLeft) * ((bottomP + leftP) * 0.5);
+        CGFloat bottomRightX = iconRight + (screenRight - iconRight) * ((bottomP + rightP) * 0.5);
 
-        CGFloat rTL = startRadius * (1.0 - MIN(tTop, tLeft));
-        CGFloat rTR = startRadius * (1.0 - MIN(tTop, tRight));
-        CGFloat rBR = startRadius * (1.0 - MIN(tBottom, tRight));
-        CGFloat rBL = startRadius * (1.0 - MIN(tBottom, tLeft));
+        CGPoint tl = CGPointMake(topLeftX, topY);
+        CGPoint tr = CGPointMake(topRightX, topY);
+        CGPoint br = CGPointMake(bottomRightX, bottomY);
+        CGPoint bl = CGPointMake(bottomLeftX, bottomY);
+
+        CGFloat rTL = startRadius * (1.0 - MIN(topP, leftP));
+        CGFloat rTR = startRadius * (1.0 - MIN(topP, rightP));
+        CGFloat rBR = startRadius * (1.0 - MIN(bottomP, rightP));
+        CGFloat rBL = startRadius * (1.0 - MIN(bottomP, leftP));
 
         CGPathRef p = LMRoundedQuadPath(tl, tr, br, bl, rTL, rTR, rBR, rBL);
         [paths addObject:(__bridge_transfer id)p];
@@ -158,7 +174,7 @@ static void LMPlayMorphOverlay(CGRect iconFrame) {
     shape.path = (__bridge CGPathRef)paths.lastObject;
     [shape addAnimation:anim forKey:@"morph"];
 
-    LMLog(@"Morph v2 played | iconCenterNorm: (%.2f, %.2f)", iconCenterXNorm, iconCenterYNorm);
+    LMLog(@"Morph v3 played | iconCenterNorm: (%.2f, %.2f)", iconCenterXNorm, iconCenterYNorm);
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [shape removeFromSuperlayer];
@@ -191,7 +207,7 @@ static void LMPlayMorphOverlay(CGRect iconFrame) {
 %end
 
 %ctor {
-    LMLog(@"=== LiquidMorph v2 loaded | process: %@ | iOS %@ ===",
+    LMLog(@"=== LiquidMorph v3 loaded | process: %@ | iOS %@ ===",
           [[NSProcessInfo processInfo] processName],
           [[UIDevice currentDevice] systemVersion]);
 }
