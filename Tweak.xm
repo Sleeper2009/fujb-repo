@@ -25,23 +25,6 @@ static void LMLog(NSString *format, ...) {
     NSLog(@"[LiquidMorph] %@", message);
 }
 
-static void LMDumpBundleMethods(id obj) {
-    if (!obj) return;
-    Class cls = [obj class];
-    unsigned int count = 0;
-    Method *methods = class_copyMethodList(cls, &count);
-    LMLog(@"[dump-bundle] class: %@ (%u methods)", NSStringFromClass(cls), count);
-    for (unsigned int i = 0; i < count; i++) {
-        SEL sel = method_getName(methods[i]);
-        NSString *name = NSStringFromSelector(sel);
-        if ([name.lowercaseString containsString:@"bundle"] ||
-            [name.lowercaseString containsString:@"identifier"]) {
-            LMLog(@"[dump-bundle] -> %@", name);
-        }
-    }
-    free(methods);
-}
-
 static CGPathRef LMRoundedQuadPath(CGPoint tl, CGPoint tr, CGPoint br, CGPoint bl,
                                     CGFloat rTL, CGFloat rTR, CGFloat rBR, CGFloat rBL) {
     NSArray *points = @[[NSValue valueWithCGPoint:tl], [NSValue valueWithCGPoint:tr],
@@ -261,38 +244,15 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
 - (id)icon;
 @end
 
-static NSString *gLastBundleID = @"";
-static BOOL gDidDumpBundle = NO;
-
 %hook SBIconView
 
 - (void)_handleTap {
     @try {
         id icon = [self valueForKey:@"icon"];
-
-        if (!gDidDumpBundle) {
-            LMDumpBundleMethods(icon);
-            gDidDumpBundle = YES;
-        }
-
         NSString *bundleID = @"";
-        SEL candidates[] = {
-            @selector(bundleIdentifier),
-            NSSelectorFromString(@"applicationBundleID"),
-            NSSelectorFromString(@"leafIdentifier")
-        };
-
-        #pragma clang diagnostic push
-        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        for (int i = 0; i < 3; i++) {
-            if (icon && [icon respondsToSelector:candidates[i]]) {
-                bundleID = [icon performSelector:candidates[i]] ?: @"";
-                if (bundleID.length > 0) break;
-            }
+        if (icon && [icon respondsToSelector:@selector(bundleIdentifier)]) {
+            bundleID = [icon performSelector:@selector(bundleIdentifier)] ?: @"";
         }
-        #pragma clang diagnostic pop
-
-        gLastBundleID = bundleID;
         CGRect frameInWindow = [self.window convertRect:self.bounds fromView:self];
         LMLog(@"_handleTap fired | bundleID: %@ | frame: %@", bundleID, NSStringFromCGRect(frameInWindow));
         LMPlayTransition(frameInWindow, bundleID, YES);
@@ -304,8 +264,13 @@ static BOOL gDidDumpBundle = NO;
 
 %end
 
+// Do them 4 candidate khac de tim dung cho tat animation goc
 @interface SBIconController : NSObject
 - (void)handleHomeButtonTap;
+- (void)_launchFromIconView:(id)iconView withActions:(id)actions;
+- (id)launchActionsForIconView:(id)iconView;
+- (void)iconManager:(id)manager launchIconForIconView:(id)iconView withActions:(id)actions;
+- (void)iconManager:(id)manager willPrepareIconViewForLaunch:(id)iconView;
 @end
 
 %hook SBIconController
@@ -326,10 +291,30 @@ static BOOL gDidDumpBundle = NO;
     %orig;
 }
 
+- (void)_launchFromIconView:(id)iconView withActions:(id)actions {
+    LMLog(@"[dump-launch] _launchFromIconView:withActions: fired");
+    %orig;
+}
+
+- (id)launchActionsForIconView:(id)iconView {
+    LMLog(@"[dump-launch] launchActionsForIconView: fired");
+    return %orig;
+}
+
+- (void)iconManager:(id)manager launchIconForIconView:(id)iconView withActions:(id)actions {
+    LMLog(@"[dump-launch] iconManager:launchIconForIconView:withActions: fired");
+    %orig;
+}
+
+- (void)iconManager:(id)manager willPrepareIconViewForLaunch:(id)iconView {
+    LMLog(@"[dump-launch] iconManager:willPrepareIconViewForLaunch: fired");
+    %orig;
+}
+
 %end
 
 %ctor {
-    LMLog(@"=== LiquidMorph REAL v3 loaded | process: %@ | iOS %@ ===",
+    LMLog(@"=== LiquidMorph REAL v4 (dump-launch) loaded | process: %@ | iOS %@ ===",
           [[NSProcessInfo processInfo] processName],
           [[UIDevice currentDevice] systemVersion]);
 }
