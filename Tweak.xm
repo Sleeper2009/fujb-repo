@@ -81,24 +81,7 @@ static CGFloat LMHumpRadius(CGFloat t) {
     }
 }
 
-static UIImage *LMLoadAppSnapshot(NSString *bundleID) {
-    if (bundleID.length == 0) return nil;
-    NSString *dir = [NSString stringWithFormat:@"/var/mobile/Library/Caches/Snapshots/%@", bundleID];
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSError *err = nil;
-    NSArray *files = [fm contentsOfDirectoryAtPath:dir error:&err];
-    if (err || files.count == 0) return nil;
-    for (NSString *f in files) {
-        if ([f.pathExtension.lowercaseString isEqualToString:@"png"] ||
-            [f.pathExtension.lowercaseString isEqualToString:@"jpg"]) {
-            NSString *fullPath = [dir stringByAppendingPathComponent:f];
-            UIImage *img = [UIImage imageWithContentsOfFile:fullPath];
-            if (img) return img;
-        }
-    }
-    return nil;
-}
-
+// Mau nen he thong (tu dong theo Sang/Toi)
 static UIColor *LMSystemBackgroundColor(void) {
     if (@available(iOS 13.0, *)) {
         return [UIColor systemBackgroundColor];
@@ -106,26 +89,9 @@ static UIColor *LMSystemBackgroundColor(void) {
     return [UIColor whiteColor];
 }
 
-// Chup anh chinh icon dang cham - dung lam noi dung hien thi khi chua co
-// snapshot app that. Day chinh la thu se "meo" theo hinh thang luc dau.
-static UIImage *LMRenderIconImage(UIView *iconView) {
-    if (!iconView) return nil;
-    CGSize size = iconView.bounds.size;
-    if (size.width <= 0 || size.height <= 0) return nil;
-    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
-    format.opaque = NO;
-    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:size format:format];
-    return [renderer imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
-        [iconView.layer renderInContext:ctx.CGContext];
-    }];
-}
-
 @interface LMTransitionState : NSObject
-@property (nonatomic, strong) CALayer *backdrop;
-@property (nonatomic, strong) CAShapeLayer *maskShape;
-@property (nonatomic, strong) CALayer *contentLayer;
+@property (nonatomic, strong) CAShapeLayer *shape;
 @property (nonatomic, assign) CGRect iconFrame;
-@property (nonatomic, copy) NSString *bundleID;
 @property (nonatomic, assign) BOOL isOpening;
 @end
 @implementation LMTransitionState
@@ -199,11 +165,8 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
 
 static void LMCancelCurrentIfAny(void) {
     if (gCurrentState) {
-        [gCurrentState.backdrop removeFromSuperlayer];
-        [gCurrentState.maskShape removeAllAnimations];
-        [gCurrentState.contentLayer removeAllAnimations];
-        [gCurrentState.maskShape removeFromSuperlayer];
-        [gCurrentState.contentLayer removeFromSuperlayer];
+        [gCurrentState.shape removeAllAnimations];
+        [gCurrentState.shape removeFromSuperlayer];
         gCurrentState = nil;
     }
 }
@@ -225,37 +188,18 @@ static void LMEnsureWindow(void) {
     gOverlayWindow.hidden = NO;
 }
 
-static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, UIImage *iconImage, BOOL opening) {
+static void LMPlayTransition(CGRect iconFrame, BOOL opening) {
     LMCancelCurrentIfAny();
     LMEnsureWindow();
 
     CGRect screen = gOverlayWindow.bounds;
 
-    CALayer *backdrop = [CALayer layer];
-    backdrop.frame = screen;
-    backdrop.backgroundColor = LMSystemBackgroundColor().CGColor;
-    [gOverlayWindow.layer addSublayer:backdrop];
-
-    UIImage *snapshot = LMLoadAppSnapshot(bundleID);
-    UIImage *displayImage = snapshot ?: iconImage;
-
-    CALayer *contentLayer = [CALayer layer];
-    contentLayer.frame = screen;
-    if (displayImage) {
-        // Icon that: dat contentsRect = frame icon trong khong gian anh de
-        // luc dau chi thay dung icon (khong bi keo gian meo tu dau), roi khi
-        // maskShape phinh to ra thi anh (snapshot that hoac icon) cung theo do
-        // ma lo dan ra toan man hinh.
-        contentLayer.contents = (__bridge id)displayImage.CGImage;
-        contentLayer.contentsGravity = kCAGravityResizeAspectFill;
-    } else {
-        contentLayer.backgroundColor = [UIColor colorWithWhite:0.85 alpha:1.0].CGColor;
-    }
-
-    CAShapeLayer *maskShape = [CAShapeLayer layer];
-    maskShape.frame = screen;
-    contentLayer.mask = maskShape;
-    [gOverlayWindow.layer addSublayer:contentLayer];
+    // Chi 1 lop shape mau he thong - KHONG backdrop, KHONG anh icon.
+    // Xung quanh hoan toan trong suot, thay duoc man hinh chinh that.
+    CAShapeLayer *shape = [CAShapeLayer layer];
+    shape.frame = screen;
+    shape.fillColor = LMSystemBackgroundColor().CGColor;
+    [gOverlayWindow.layer addSublayer:shape];
 
     NSArray *paths = LMBuildKeyframePaths(iconFrame, screen, opening);
 
@@ -266,26 +210,20 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, UIImage *icon
     anim.fillMode = kCAFillModeForwards;
     anim.removedOnCompletion = NO;
 
-    maskShape.path = (__bridge CGPathRef)paths.lastObject;
-    [maskShape addAnimation:anim forKey:@"morph"];
+    shape.path = (__bridge CGPathRef)paths.lastObject;
+    [shape addAnimation:anim forKey:@"morph"];
 
     LMTransitionState *state = [LMTransitionState new];
-    state.backdrop = backdrop;
-    state.maskShape = maskShape;
-    state.contentLayer = contentLayer;
+    state.shape = shape;
     state.iconFrame = iconFrame;
-    state.bundleID = bundleID;
     state.isOpening = opening;
     gCurrentState = state;
 
-    LMLog(@"Transition %@ played | bundleID: %@ | snapshot: %@ | iconImage: %@",
-          opening ? @"OPEN" : @"CLOSE", bundleID ?: @"?", snapshot ? @"yes" : @"no", iconImage ? @"yes" : @"no");
+    LMLog(@"Transition %@ played | frame: %@", opening ? @"OPEN" : @"CLOSE", NSStringFromCGRect(iconFrame));
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((anim.duration + 0.05) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (gCurrentState == state) {
-            [backdrop removeFromSuperlayer];
-            [maskShape removeFromSuperlayer];
-            [contentLayer removeFromSuperlayer];
+            [shape removeFromSuperlayer];
             gCurrentState = nil;
         }
     });
@@ -312,15 +250,9 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, UIImage *icon
             return;
         }
 
-        NSString *bundleID = @"";
-        if (icon && [icon respondsToSelector:@selector(bundleIdentifier)]) {
-            bundleID = [icon performSelector:@selector(bundleIdentifier)] ?: @"";
-        }
         CGRect frameInWindow = [self.window convertRect:self.bounds fromView:self];
-        UIImage *iconImage = LMRenderIconImage(self);
-        LMLog(@"_handleTap fired | class: %@ | bundleID: %@ | frame: %@ | iconImage: %@",
-              className, bundleID, NSStringFromCGRect(frameInWindow), iconImage ? @"ok" : @"nil");
-        LMPlayTransition(frameInWindow, bundleID, iconImage, YES);
+        LMLog(@"_handleTap fired | class: %@ | frame: %@", className, NSStringFromCGRect(frameInWindow));
+        LMPlayTransition(frameInWindow, YES);
     } @catch (NSException *e) {
         LMLog(@"Exception in _handleTap: %@", e.reason);
     }
@@ -340,8 +272,7 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, UIImage *icon
         LMLog(@"handleHomeButtonTap fired | hasActiveState: %d", gCurrentState != nil);
         if (gCurrentState && gCurrentState.isOpening) {
             CGRect iconFrame = gCurrentState.iconFrame;
-            NSString *bundleID = gCurrentState.bundleID;
-            LMPlayTransition(iconFrame, bundleID, nil, NO);
+            LMPlayTransition(iconFrame, NO);
         }
     } @catch (NSException *e) {
         LMLog(@"Exception in handleHomeButtonTap: %@", e.reason);
@@ -352,7 +283,7 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, UIImage *icon
 %end
 
 %ctor {
-    LMLog(@"=== LiquidMorph REAL v7 loaded | process: %@ | iOS %@ ===",
+    LMLog(@"=== LiquidMorph REAL v8 (simple) loaded | process: %@ | iOS %@ ===",
           [[NSProcessInfo processInfo] processName],
           [[UIDevice currentDevice] systemVersion]);
 }
