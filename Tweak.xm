@@ -99,7 +99,6 @@ static UIImage *LMLoadAppSnapshot(NSString *bundleID) {
     return nil;
 }
 
-// Mau nen he thong (tu dong theo Sang/Toi), dung khi chua co snapshot that.
 static UIColor *LMSystemBackgroundColor(void) {
     if (@available(iOS 13.0, *)) {
         return [UIColor systemBackgroundColor];
@@ -107,8 +106,22 @@ static UIColor *LMSystemBackgroundColor(void) {
     return [UIColor whiteColor];
 }
 
+// Chup anh chinh icon dang cham - dung lam noi dung hien thi khi chua co
+// snapshot app that. Day chinh la thu se "meo" theo hinh thang luc dau.
+static UIImage *LMRenderIconImage(UIView *iconView) {
+    if (!iconView) return nil;
+    CGSize size = iconView.bounds.size;
+    if (size.width <= 0 || size.height <= 0) return nil;
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
+    format.opaque = NO;
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:size format:format];
+    return [renderer imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        [iconView.layer renderInContext:ctx.CGContext];
+    }];
+}
+
 @interface LMTransitionState : NSObject
-@property (nonatomic, strong) CALayer *backdrop;   // lop nen dac, che kin toan man hinh
+@property (nonatomic, strong) CALayer *backdrop;
 @property (nonatomic, strong) CAShapeLayer *maskShape;
 @property (nonatomic, strong) CALayer *contentLayer;
 @property (nonatomic, assign) CGRect iconFrame;
@@ -212,28 +225,31 @@ static void LMEnsureWindow(void) {
     gOverlayWindow.hidden = NO;
 }
 
-static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening) {
+static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, UIImage *iconImage, BOOL opening) {
     LMCancelCurrentIfAny();
     LMEnsureWindow();
 
     CGRect screen = gOverlayWindow.bounds;
 
-    // Lop nen DAC, phu KIN toan man hinh NGAY LAP TUC - che hoan toan bat ky
-    // animation goc nao dang chay ben duoi, du no nhanh hay cham.
     CALayer *backdrop = [CALayer layer];
     backdrop.frame = screen;
     backdrop.backgroundColor = LMSystemBackgroundColor().CGColor;
     [gOverlayWindow.layer addSublayer:backdrop];
 
     UIImage *snapshot = LMLoadAppSnapshot(bundleID);
+    UIImage *displayImage = snapshot ?: iconImage;
 
     CALayer *contentLayer = [CALayer layer];
     contentLayer.frame = screen;
-    contentLayer.contentsGravity = kCAGravityResizeAspectFill;
-    if (snapshot) {
-        contentLayer.contents = (__bridge id)snapshot.CGImage;
+    if (displayImage) {
+        // Icon that: dat contentsRect = frame icon trong khong gian anh de
+        // luc dau chi thay dung icon (khong bi keo gian meo tu dau), roi khi
+        // maskShape phinh to ra thi anh (snapshot that hoac icon) cung theo do
+        // ma lo dan ra toan man hinh.
+        contentLayer.contents = (__bridge id)displayImage.CGImage;
+        contentLayer.contentsGravity = kCAGravityResizeAspectFill;
     } else {
-        contentLayer.backgroundColor = LMSystemBackgroundColor().CGColor;
+        contentLayer.backgroundColor = [UIColor colorWithWhite:0.85 alpha:1.0].CGColor;
     }
 
     CAShapeLayer *maskShape = [CAShapeLayer layer];
@@ -262,8 +278,8 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
     state.isOpening = opening;
     gCurrentState = state;
 
-    LMLog(@"Transition %@ played | bundleID: %@ | snapshot: %@",
-          opening ? @"OPEN" : @"CLOSE", bundleID ?: @"?", snapshot ? @"yes" : @"no");
+    LMLog(@"Transition %@ played | bundleID: %@ | snapshot: %@ | iconImage: %@",
+          opening ? @"OPEN" : @"CLOSE", bundleID ?: @"?", snapshot ? @"yes" : @"no", iconImage ? @"yes" : @"no");
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((anim.duration + 0.05) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (gCurrentState == state) {
@@ -286,7 +302,6 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
         id icon = [self valueForKey:@"icon"];
         NSString *className = NSStringFromClass([icon class]);
 
-        // Bo qua folder / thu vien ung dung - chi ap dung cho app that.
         BOOL isFolderLike = [className.lowercaseString containsString:@"folder"] ||
                              [className.lowercaseString containsString:@"library"] ||
                              [className.lowercaseString containsString:@"cluster"];
@@ -302,8 +317,10 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
             bundleID = [icon performSelector:@selector(bundleIdentifier)] ?: @"";
         }
         CGRect frameInWindow = [self.window convertRect:self.bounds fromView:self];
-        LMLog(@"_handleTap fired | class: %@ | bundleID: %@ | frame: %@", className, bundleID, NSStringFromCGRect(frameInWindow));
-        LMPlayTransition(frameInWindow, bundleID, YES);
+        UIImage *iconImage = LMRenderIconImage(self);
+        LMLog(@"_handleTap fired | class: %@ | bundleID: %@ | frame: %@ | iconImage: %@",
+              className, bundleID, NSStringFromCGRect(frameInWindow), iconImage ? @"ok" : @"nil");
+        LMPlayTransition(frameInWindow, bundleID, iconImage, YES);
     } @catch (NSException *e) {
         LMLog(@"Exception in _handleTap: %@", e.reason);
     }
@@ -324,7 +341,7 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
         if (gCurrentState && gCurrentState.isOpening) {
             CGRect iconFrame = gCurrentState.iconFrame;
             NSString *bundleID = gCurrentState.bundleID;
-            LMPlayTransition(iconFrame, bundleID, NO);
+            LMPlayTransition(iconFrame, bundleID, nil, NO);
         }
     } @catch (NSException *e) {
         LMLog(@"Exception in handleHomeButtonTap: %@", e.reason);
@@ -335,7 +352,7 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
 %end
 
 %ctor {
-    LMLog(@"=== LiquidMorph REAL v6 loaded | process: %@ | iOS %@ ===",
+    LMLog(@"=== LiquidMorph REAL v7 loaded | process: %@ | iOS %@ ===",
           [[NSProcessInfo processInfo] processName],
           [[UIDevice currentDevice] systemVersion]);
 }
