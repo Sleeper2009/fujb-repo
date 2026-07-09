@@ -26,7 +26,8 @@ static void LMLog(NSString *format, ...) {
 }
 
 static CGPathRef LMRoundedQuadPath(CGPoint tl, CGPoint tr, CGPoint br, CGPoint bl,
-                                    CGFloat rTL, CGFloat rTR, CGFloat rBR, CGFloat rBL) {
+                                    CGFloat rTL, CGFloat rTR, CGFloat rBR, CGFloat rBL,
+                                    CGRect *outBoundsInScreen) {
     NSArray *points = @[[NSValue valueWithCGPoint:tl], [NSValue valueWithCGPoint:tr],
                          [NSValue valueWithCGPoint:br], [NSValue valueWithCGPoint:bl]];
     NSArray *radii = @[@(rTL), @(rTR), @(rBR), @(rBL)];
@@ -54,6 +55,14 @@ static CGPathRef LMRoundedQuadPath(CGPoint tl, CGPoint tr, CGPoint br, CGPoint b
         CGPathAddQuadCurveToPoint(path, NULL, cur.x, cur.y, p2.x, p2.y);
     }
     CGPathCloseSubpath(path);
+
+    if (outBoundsInScreen) {
+        CGFloat minX = MIN(MIN(tl.x, tr.x), MIN(br.x, bl.x));
+        CGFloat maxX = MAX(MAX(tl.x, tr.x), MAX(br.x, bl.x));
+        CGFloat minY = MIN(MIN(tl.y, tr.y), MIN(br.y, bl.y));
+        CGFloat maxY = MAX(MAX(tl.y, tr.y), MAX(br.y, bl.y));
+        *outBoundsInScreen = CGRectMake(minX, minY, maxX - minX, maxY - minY);
+    }
     return path;
 }
 
@@ -101,7 +110,6 @@ static UIImage *LMRenderIconImage(UIView *iconView) {
 }
 
 @interface LMTransitionState : NSObject
-@property (nonatomic, strong) CALayer *backdrop;
 @property (nonatomic, strong) CAShapeLayer *maskShape;
 @property (nonatomic, strong) CALayer *iconLayer;
 @property (nonatomic, strong) CALayer *colorLayer;
@@ -114,9 +122,11 @@ static UIImage *LMRenderIconImage(UIView *iconView) {
 static LMTransitionState *gCurrentState = nil;
 static UIWindow *gOverlayWindow = nil;
 
-// Giai doan dau (0..growStart): hinh GIU NGUYEN y het icon that, dung yen,
-// khong meo khong nay. Chi sau growStart moi bat dau phong to + bien dang.
-static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL opening) {
+// Tra ve 3 mang song song: paths (hinh dang that de lam mask), va cac
+// bounding-rect (NSValue CGRect) tuong ung tung buoc - dung de set kich
+// thuoc THAT cua layer chua anh, KHONG con la full-screen-bi-cat nua.
+static void LMBuildKeyframes(CGRect iconFrame, CGRect screen, BOOL opening,
+                              NSArray **outPaths, NSArray **outBounds) {
     CGFloat iconCenterXNorm = (iconFrame.origin.x + iconFrame.size.width / 2.0) / screen.size.width;
     CGFloat iconCenterYNorm = (iconFrame.origin.y + iconFrame.size.height / 2.0) / screen.size.height;
 
@@ -127,6 +137,7 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
 
     NSInteger steps = 28;
     NSMutableArray *paths = [NSMutableArray array];
+    NSMutableArray *bounds = [NSMutableArray array];
     CGFloat maxDelay = 0.4;
     CGFloat endRadius = 20.0;
     CGFloat iconRadius = 13.0;
@@ -149,13 +160,13 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
         CGFloat t = opening ? tRaw : (1.0 - tRaw);
 
         CGPathRef p;
+        CGRect boundsRect;
 
         if (t < growStart) {
-            // Giai doan tinh: hinh = chinh xac icon, khong doi.
             p = LMRoundedQuadPath(
                 CGPointMake(iconLeft, iconTop), CGPointMake(iconRight, iconTop),
                 CGPointMake(iconRight, iconBottom), CGPointMake(iconLeft, iconBottom),
-                iconRadius, iconRadius, iconRadius, iconRadius);
+                iconRadius, iconRadius, iconRadius, iconRadius, &boundsRect);
         } else {
             CGFloat t2 = (t - growStart) / (1.0 - growStart);
 
@@ -186,12 +197,15 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
             CGFloat rBR = humpBase * (1.0 - MIN(bottomP, rightP)) + endRadius * MIN(bottomP, rightP);
             CGFloat rBL = humpBase * (1.0 - MIN(bottomP, leftP)) + endRadius * MIN(bottomP, leftP);
 
-            p = LMRoundedQuadPath(tl, tr, br, bl, rTL, rTR, rBR, rBL);
+            p = LMRoundedQuadPath(tl, tr, br, bl, rTL, rTR, rBR, rBL, &boundsRect);
         }
 
         [paths addObject:(__bridge_transfer id)p];
+        [bounds addObject:[NSValue valueWithCGRect:boundsRect]];
     }
-    return paths;
+
+    *outPaths = paths;
+    *outBounds = bounds;
 }
 
 static void LMForceClearOverlay(void) {
@@ -228,36 +242,80 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     CGRect screen = gOverlayWindow.bounds;
     CGFloat duration = 0.45;
 
-    CALayer *backdrop = [CALayer layer];
-    backdrop.frame = screen;
-    backdrop.backgroundColor = LMSystemBackgroundColor().CGColor;
-    [gOverlayWindow.layer addSublayer:backdrop];
+    // KHONG con backdrop nua. Chi 2 layer: anh icon + mau he thong,
+    // ca hai co KICH THUOC THAT tang dan (khong phai full-screen-bi-cat).
 
+    NSArray *paths;
+    NSArray *boundsSteps;
+    LMBuildKeyframes(iconFrame, screen, opening, &paths, &boundsSteps);
+
+    CGRect startBounds = [boundsSteps.firstObject CGRectValue];
+
+    // Lop anh icon
     CAShapeLayer *maskShape = [CAShapeLayer layer];
-    maskShape.frame = screen;
-
     CALayer *iconLayer = [CALayer layer];
-    iconLayer.frame = screen;
+    iconLayer.frame = startBounds;
     iconLayer.contentsGravity = kCAGravityResizeAspectFill;
     if (iconImage) {
         iconLayer.contents = (__bridge id)iconImage.CGImage;
     } else {
         iconLayer.backgroundColor = [UIColor colorWithWhite:0.85 alpha:1.0].CGColor;
     }
+    maskShape.frame = screen;
+    // Mask nam trong he toa do window, nhung iconLayer nam trong he toa do
+    // rieng cua no (bat dau tu startBounds) - can dat mask.position bu tru.
+    maskShape.position = CGPointMake(-startBounds.origin.x, -startBounds.origin.y);
     iconLayer.mask = maskShape;
     [gOverlayWindow.layer addSublayer:iconLayer];
 
+    // Lop mau he thong (mo dan hien len sau)
     CAShapeLayer *maskShape2 = [CAShapeLayer layer];
-    maskShape2.frame = screen;
     CALayer *colorLayer = [CALayer layer];
-    colorLayer.frame = screen;
+    colorLayer.frame = startBounds;
     colorLayer.backgroundColor = LMSystemBackgroundColor().CGColor;
     colorLayer.opacity = 0.0;
+    maskShape2.frame = screen;
+    maskShape2.position = CGPointMake(-startBounds.origin.x, -startBounds.origin.y);
     colorLayer.mask = maskShape2;
     [gOverlayWindow.layer addSublayer:colorLayer];
 
-    NSArray *paths = LMBuildKeyframePaths(iconFrame, screen, opening);
+    // Animate frame (bounds+position) cua ca 2 layer theo dung kich thuoc that
+    NSMutableArray *boundsValues = [NSMutableArray array];
+    NSMutableArray *positionValues = [NSMutableArray array];
+    for (NSValue *v in boundsSteps) {
+        CGRect r = [v CGRectValue];
+        [boundsValues addObject:[NSValue valueWithCGRect:CGRectMake(0, 0, r.size.width, r.size.height)]];
+        [positionValues addObject:[NSValue valueWithCGPoint:CGPointMake(r.origin.x + r.size.width / 2.0,
+                                                                          r.origin.y + r.size.height / 2.0)]];
+    }
 
+    CAKeyframeAnimation *boundsAnim = [CAKeyframeAnimation animationWithKeyPath:@"bounds"];
+    boundsAnim.values = boundsValues;
+    boundsAnim.duration = duration;
+    boundsAnim.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+    boundsAnim.fillMode = kCAFillModeForwards;
+    boundsAnim.removedOnCompletion = NO;
+
+    CAKeyframeAnimation *positionAnim = [CAKeyframeAnimation animationWithKeyPath:@"position"];
+    positionAnim.values = positionValues;
+    positionAnim.duration = duration;
+    positionAnim.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+    positionAnim.fillMode = kCAFillModeForwards;
+    positionAnim.removedOnCompletion = NO;
+
+    CGRect endBounds = [boundsSteps.lastObject CGRectValue];
+    iconLayer.bounds = CGRectMake(0, 0, endBounds.size.width, endBounds.size.height);
+    iconLayer.position = CGPointMake(endBounds.origin.x + endBounds.size.width / 2.0,
+                                      endBounds.origin.y + endBounds.size.height / 2.0);
+    [iconLayer addAnimation:boundsAnim forKey:@"bounds"];
+    [iconLayer addAnimation:positionAnim forKey:@"position"];
+
+    colorLayer.bounds = iconLayer.bounds;
+    colorLayer.position = iconLayer.position;
+    [colorLayer addAnimation:boundsAnim forKey:@"bounds"];
+    [colorLayer addAnimation:positionAnim forKey:@"position"];
+
+    // Mask path (hinh dang meo) - van dinh nghia trong he toa do window
     CAKeyframeAnimation *pathAnim = [CAKeyframeAnimation animationWithKeyPath:@"path"];
     pathAnim.values = paths;
     pathAnim.duration = duration;
@@ -267,9 +325,25 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
     maskShape.path = (__bridge CGPathRef)paths.lastObject;
     [maskShape addAnimation:pathAnim forKey:@"morph"];
-
     maskShape2.path = (__bridge CGPathRef)paths.lastObject;
     [maskShape2 addAnimation:pathAnim forKey:@"morph"];
+
+    // Mask position cung phai animate de bu tru dung theo iconLayer dang di chuyen
+    CAKeyframeAnimation *maskPosAnim = [CAKeyframeAnimation animationWithKeyPath:@"position"];
+    NSMutableArray *maskPosValues = [NSMutableArray array];
+    for (NSValue *v in boundsSteps) {
+        CGRect r = [v CGRectValue];
+        [maskPosValues addObject:[NSValue valueWithCGPoint:CGPointMake(-r.origin.x, -r.origin.y)]];
+    }
+    maskPosAnim.values = maskPosValues;
+    maskPosAnim.duration = duration;
+    maskPosAnim.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+    maskPosAnim.fillMode = kCAFillModeForwards;
+    maskPosAnim.removedOnCompletion = NO;
+    maskShape.position = CGPointMake(-endBounds.origin.x, -endBounds.origin.y);
+    [maskShape addAnimation:maskPosAnim forKey:@"posmorph"];
+    maskShape2.position = maskShape.position;
+    [maskShape2 addAnimation:maskPosAnim forKey:@"posmorph"];
 
     CAKeyframeAnimation *fadeAnim = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
     fadeAnim.values = @[@0.0, @0.0, @1.0, @1.0];
@@ -277,12 +351,10 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     fadeAnim.duration = duration;
     fadeAnim.fillMode = kCAFillModeForwards;
     fadeAnim.removedOnCompletion = NO;
-
     colorLayer.opacity = 1.0;
     [colorLayer addAnimation:fadeAnim forKey:@"fade"];
 
     LMTransitionState *state = [LMTransitionState new];
-    state.backdrop = backdrop;
     state.maskShape = maskShape;
     state.iconLayer = iconLayer;
     state.colorLayer = colorLayer;
@@ -293,11 +365,8 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     LMLog(@"Transition %@ played | frame: %@ | iconImage: %@",
           opening ? @"OPEN" : @"CLOSE", NSStringFromCGRect(iconFrame), iconImage ? @"yes" : @"nil");
 
-    // Don dep bang thoi gian chinh xac - KHONG dung CATransaction completion
-    // block nua (khong dang tin cay trong ngu canh hook SpringBoard nay).
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((duration + 0.02) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (gCurrentState == state) {
-            [backdrop removeFromSuperlayer];
             [iconLayer removeFromSuperlayer];
             [colorLayer removeFromSuperlayer];
             gCurrentState = nil;
@@ -346,8 +415,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
 - (void)handleHomeButtonTap {
     @try {
-        LMLog(@"handleHomeButtonTap fired | hasActiveState: %d | isOpening: %d",
-              gCurrentState != nil, gCurrentState.isOpening);
+        LMLog(@"handleHomeButtonTap fired | hasActiveState: %d", gCurrentState != nil);
         if (gCurrentState && gCurrentState.isOpening) {
             CGRect iconFrame = gCurrentState.iconFrame;
             LMPlayTransition(iconFrame, nil, NO);
@@ -361,7 +429,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %end
 
 %ctor {
-    LMLog(@"=== LiquidMorph REAL v10 loaded | process: %@ | iOS %@ ===",
+    LMLog(@"=== LiquidMorph REAL v11 (no backdrop, real size) loaded | process: %@ | iOS %@ ===",
           [[NSProcessInfo processInfo] processName],
           [[UIDevice currentDevice] systemVersion]);
 }
