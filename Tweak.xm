@@ -81,7 +81,6 @@ static CGFloat LMHumpRadius(CGFloat t) {
     }
 }
 
-// Mau nen he thong (tu dong theo Sang/Toi)
 static UIColor *LMSystemBackgroundColor(void) {
     if (@available(iOS 13.0, *)) {
         return [UIColor systemBackgroundColor];
@@ -89,8 +88,23 @@ static UIColor *LMSystemBackgroundColor(void) {
     return [UIColor whiteColor];
 }
 
+static UIImage *LMRenderIconImage(UIView *iconView) {
+    if (!iconView) return nil;
+    CGSize size = iconView.bounds.size;
+    if (size.width <= 0 || size.height <= 0) return nil;
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
+    format.opaque = NO;
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:size format:format];
+    return [renderer imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        [iconView.layer renderInContext:ctx.CGContext];
+    }];
+}
+
 @interface LMTransitionState : NSObject
-@property (nonatomic, strong) CAShapeLayer *shape;
+@property (nonatomic, strong) CALayer *backdrop;
+@property (nonatomic, strong) CAShapeLayer *maskShape;
+@property (nonatomic, strong) CALayer *iconLayer;
+@property (nonatomic, strong) CALayer *colorLayer;
 @property (nonatomic, assign) CGRect iconFrame;
 @property (nonatomic, assign) BOOL isOpening;
 @end
@@ -165,9 +179,19 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
 
 static void LMCancelCurrentIfAny(void) {
     if (gCurrentState) {
-        [gCurrentState.shape removeAllAnimations];
-        [gCurrentState.shape removeFromSuperlayer];
+        [gCurrentState.backdrop removeFromSuperlayer];
+        [gCurrentState.maskShape removeAllAnimations];
+        [gCurrentState.iconLayer removeFromSuperlayer];
+        [gCurrentState.colorLayer removeFromSuperlayer];
         gCurrentState = nil;
+    }
+    // Don dep cuong buc: xoa sach moi sublayer con sot lai tren overlay window,
+    // phong khi bien gCurrentState bi mat tham chieu nhung layer van con dinh.
+    if (gOverlayWindow) {
+        NSArray *sublayers = [gOverlayWindow.layer.sublayers copy];
+        for (CALayer *l in sublayers) {
+            [l removeFromSuperlayer];
+        }
     }
 }
 
@@ -188,45 +212,98 @@ static void LMEnsureWindow(void) {
     gOverlayWindow.hidden = NO;
 }
 
-static void LMPlayTransition(CGRect iconFrame, BOOL opening) {
+static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening) {
     LMCancelCurrentIfAny();
     LMEnsureWindow();
 
     CGRect screen = gOverlayWindow.bounds;
+    CGFloat duration = 0.45;
 
-    // Chi 1 lop shape mau he thong - KHONG backdrop, KHONG anh icon.
-    // Xung quanh hoan toan trong suot, thay duoc man hinh chinh that.
-    CAShapeLayer *shape = [CAShapeLayer layer];
-    shape.frame = screen;
-    shape.fillColor = LMSystemBackgroundColor().CGColor;
-    [gOverlayWindow.layer addSublayer:shape];
+    // Backdrop phu KIN toan man hinh trong SUOT thoi gian animation - che
+    // hoan toan animation goc cua he thong. Se bi xoa dung luc animation
+    // xong nho CATransaction completion block (khong dung timer nua).
+    CALayer *backdrop = [CALayer layer];
+    backdrop.frame = screen;
+    backdrop.backgroundColor = LMSystemBackgroundColor().CGColor;
+    [gOverlayWindow.layer addSublayer:backdrop];
+
+    CAShapeLayer *maskShape = [CAShapeLayer layer];
+    maskShape.frame = screen;
+
+    // Lop 1: anh icon that (hien tu dau)
+    CALayer *iconLayer = [CALayer layer];
+    iconLayer.frame = screen;
+    iconLayer.contentsGravity = kCAGravityResizeAspectFill;
+    if (iconImage) {
+        iconLayer.contents = (__bridge id)iconImage.CGImage;
+    } else {
+        iconLayer.backgroundColor = [UIColor colorWithWhite:0.85 alpha:1.0].CGColor;
+    }
+    iconLayer.mask = maskShape;
+    [gOverlayWindow.layer addSublayer:iconLayer];
+
+    // Lop 2: mau he thong dac, mo dan HIEN len sau (opacity 0 -> 1),
+    // dung CAShapeLayer rieng lam mask giong het lop 1 de luon khop nhau.
+    CAShapeLayer *maskShape2 = [CAShapeLayer layer];
+    maskShape2.frame = screen;
+    CALayer *colorLayer = [CALayer layer];
+    colorLayer.frame = screen;
+    colorLayer.backgroundColor = LMSystemBackgroundColor().CGColor;
+    colorLayer.opacity = 0.0;
+    colorLayer.mask = maskShape2;
+    [gOverlayWindow.layer addSublayer:colorLayer];
 
     NSArray *paths = LMBuildKeyframePaths(iconFrame, screen, opening);
 
-    CAKeyframeAnimation *anim = [CAKeyframeAnimation animationWithKeyPath:@"path"];
-    anim.values = paths;
-    anim.duration = 0.45;
-    anim.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
-    anim.fillMode = kCAFillModeForwards;
-    anim.removedOnCompletion = NO;
-
-    shape.path = (__bridge CGPathRef)paths.lastObject;
-    [shape addAnimation:anim forKey:@"morph"];
-
     LMTransitionState *state = [LMTransitionState new];
-    state.shape = shape;
+    state.backdrop = backdrop;
+    state.maskShape = maskShape;
+    state.iconLayer = iconLayer;
+    state.colorLayer = colorLayer;
     state.iconFrame = iconFrame;
     state.isOpening = opening;
     gCurrentState = state;
 
-    LMLog(@"Transition %@ played | frame: %@", opening ? @"OPEN" : @"CLOSE", NSStringFromCGRect(iconFrame));
-
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((anim.duration + 0.05) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    [CATransaction begin];
+    [CATransaction setCompletionBlock:^{
         if (gCurrentState == state) {
-            [shape removeFromSuperlayer];
+            [backdrop removeFromSuperlayer];
+            [iconLayer removeFromSuperlayer];
+            [colorLayer removeFromSuperlayer];
             gCurrentState = nil;
         }
-    });
+    }];
+
+    // Animate hinh dang (dung chung cho ca 2 mask)
+    CAKeyframeAnimation *pathAnim = [CAKeyframeAnimation animationWithKeyPath:@"path"];
+    pathAnim.values = paths;
+    pathAnim.duration = duration;
+    pathAnim.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+    pathAnim.fillMode = kCAFillModeForwards;
+    pathAnim.removedOnCompletion = NO;
+
+    maskShape.path = (__bridge CGPathRef)paths.lastObject;
+    [maskShape addAnimation:pathAnim forKey:@"morph"];
+
+    maskShape2.path = (__bridge CGPathRef)paths.lastObject;
+    [maskShape2 addAnimation:pathAnim forKey:@"morph"];
+
+    // Icon hien ~0-55% thoi gian, roi mau he thong mo dan che len trong
+    // khoang 55%-66% (~0.05s cua 0.45s), giu nguyen den cuoi.
+    CAKeyframeAnimation *fadeAnim = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
+    fadeAnim.values = @[@0.0, @0.0, @1.0, @1.0];
+    fadeAnim.keyTimes = @[@0.0, @0.55, @0.66, @1.0];
+    fadeAnim.duration = duration;
+    fadeAnim.fillMode = kCAFillModeForwards;
+    fadeAnim.removedOnCompletion = NO;
+
+    colorLayer.opacity = 1.0;
+    [colorLayer addAnimation:fadeAnim forKey:@"fade"];
+
+    [CATransaction commit];
+
+    LMLog(@"Transition %@ played | frame: %@ | iconImage: %@",
+          opening ? @"OPEN" : @"CLOSE", NSStringFromCGRect(iconFrame), iconImage ? @"yes" : @"nil");
 }
 
 @interface SBIconView : UIView
@@ -251,8 +328,9 @@ static void LMPlayTransition(CGRect iconFrame, BOOL opening) {
         }
 
         CGRect frameInWindow = [self.window convertRect:self.bounds fromView:self];
+        UIImage *iconImage = LMRenderIconImage(self);
         LMLog(@"_handleTap fired | class: %@ | frame: %@", className, NSStringFromCGRect(frameInWindow));
-        LMPlayTransition(frameInWindow, YES);
+        LMPlayTransition(frameInWindow, iconImage, YES);
     } @catch (NSException *e) {
         LMLog(@"Exception in _handleTap: %@", e.reason);
     }
@@ -269,10 +347,10 @@ static void LMPlayTransition(CGRect iconFrame, BOOL opening) {
 
 - (void)handleHomeButtonTap {
     @try {
-        LMLog(@"handleHomeButtonTap fired | hasActiveState: %d", gCurrentState != nil);
+        LMLog(@"[close-test] handleHomeButtonTap fired | hasActiveState: %d", gCurrentState != nil);
         if (gCurrentState && gCurrentState.isOpening) {
             CGRect iconFrame = gCurrentState.iconFrame;
-            LMPlayTransition(iconFrame, NO);
+            LMPlayTransition(iconFrame, nil, NO);
         }
     } @catch (NSException *e) {
         LMLog(@"Exception in handleHomeButtonTap: %@", e.reason);
@@ -283,7 +361,17 @@ static void LMPlayTransition(CGRect iconFrame, BOOL opening) {
 %end
 
 %ctor {
-    LMLog(@"=== LiquidMorph REAL v8 (simple) loaded | process: %@ | iOS %@ ===",
+    LMLog(@"=== LiquidMorph REAL v9 (combined) loaded | process: %@ | iOS %@ ===",
           [[NSProcessInfo processInfo] processName],
           [[UIDevice currentDevice] systemVersion]);
+
+    // Chi LOG de doi chieu, KHONG tu dong trigger transition tu day - tranh
+    // bi kich hoat 2 lan (1 tu handleHomeButtonTap, 1 tu day) trong ban test nay.
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
+                                                        object:nil
+                                                         queue:nil
+                                                    usingBlock:^(NSNotification *note) {
+        LMLog(@"[close-test] UIApplicationDidBecomeActiveNotification fired | hasActiveState: %d",
+              gCurrentState != nil);
+    }];
 }
