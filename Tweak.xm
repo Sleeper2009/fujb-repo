@@ -26,8 +26,7 @@ static void LMLog(NSString *format, ...) {
 }
 
 static CGPathRef LMRoundedQuadPath(CGPoint tl, CGPoint tr, CGPoint br, CGPoint bl,
-                                    CGFloat rTL, CGFloat rTR, CGFloat rBR, CGFloat rBL,
-                                    CGRect *outBoundsInScreen) {
+                                    CGFloat rTL, CGFloat rTR, CGFloat rBR, CGFloat rBL) {
     NSArray *points = @[[NSValue valueWithCGPoint:tl], [NSValue valueWithCGPoint:tr],
                          [NSValue valueWithCGPoint:br], [NSValue valueWithCGPoint:bl]];
     NSArray *radii = @[@(rTL), @(rTR), @(rBR), @(rBL)];
@@ -55,14 +54,6 @@ static CGPathRef LMRoundedQuadPath(CGPoint tl, CGPoint tr, CGPoint br, CGPoint b
         CGPathAddQuadCurveToPoint(path, NULL, cur.x, cur.y, p2.x, p2.y);
     }
     CGPathCloseSubpath(path);
-
-    if (outBoundsInScreen) {
-        CGFloat minX = MIN(MIN(tl.x, tr.x), MIN(br.x, bl.x));
-        CGFloat maxX = MAX(MAX(tl.x, tr.x), MAX(br.x, bl.x));
-        CGFloat minY = MIN(MIN(tl.y, tr.y), MIN(br.y, bl.y));
-        CGFloat maxY = MAX(MAX(tl.y, tr.y), MAX(br.y, bl.y));
-        *outBoundsInScreen = CGRectMake(minX, minY, maxX - minX, maxY - minY);
-    }
     return path;
 }
 
@@ -122,11 +113,7 @@ static UIImage *LMRenderIconImage(UIView *iconView) {
 static LMTransitionState *gCurrentState = nil;
 static UIWindow *gOverlayWindow = nil;
 
-// Tra ve 3 mang song song: paths (hinh dang that de lam mask), va cac
-// bounding-rect (NSValue CGRect) tuong ung tung buoc - dung de set kich
-// thuoc THAT cua layer chua anh, KHONG con la full-screen-bi-cat nua.
-static void LMBuildKeyframes(CGRect iconFrame, CGRect screen, BOOL opening,
-                              NSArray **outPaths, NSArray **outBounds) {
+static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL opening) {
     CGFloat iconCenterXNorm = (iconFrame.origin.x + iconFrame.size.width / 2.0) / screen.size.width;
     CGFloat iconCenterYNorm = (iconFrame.origin.y + iconFrame.size.height / 2.0) / screen.size.height;
 
@@ -137,7 +124,6 @@ static void LMBuildKeyframes(CGRect iconFrame, CGRect screen, BOOL opening,
 
     NSInteger steps = 28;
     NSMutableArray *paths = [NSMutableArray array];
-    NSMutableArray *bounds = [NSMutableArray array];
     CGFloat maxDelay = 0.4;
     CGFloat endRadius = 20.0;
     CGFloat iconRadius = 13.0;
@@ -160,13 +146,12 @@ static void LMBuildKeyframes(CGRect iconFrame, CGRect screen, BOOL opening,
         CGFloat t = opening ? tRaw : (1.0 - tRaw);
 
         CGPathRef p;
-        CGRect boundsRect;
 
         if (t < growStart) {
             p = LMRoundedQuadPath(
                 CGPointMake(iconLeft, iconTop), CGPointMake(iconRight, iconTop),
                 CGPointMake(iconRight, iconBottom), CGPointMake(iconLeft, iconBottom),
-                iconRadius, iconRadius, iconRadius, iconRadius, &boundsRect);
+                iconRadius, iconRadius, iconRadius, iconRadius);
         } else {
             CGFloat t2 = (t - growStart) / (1.0 - growStart);
 
@@ -197,15 +182,12 @@ static void LMBuildKeyframes(CGRect iconFrame, CGRect screen, BOOL opening,
             CGFloat rBR = humpBase * (1.0 - MIN(bottomP, rightP)) + endRadius * MIN(bottomP, rightP);
             CGFloat rBL = humpBase * (1.0 - MIN(bottomP, leftP)) + endRadius * MIN(bottomP, leftP);
 
-            p = LMRoundedQuadPath(tl, tr, br, bl, rTL, rTR, rBR, rBL, &boundsRect);
+            p = LMRoundedQuadPath(tl, tr, br, bl, rTL, rTR, rBR, rBL);
         }
 
         [paths addObject:(__bridge_transfer id)p];
-        [bounds addObject:[NSValue valueWithCGRect:boundsRect]];
     }
-
-    *outPaths = paths;
-    *outBounds = bounds;
+    return paths;
 }
 
 static void LMForceClearOverlay(void) {
@@ -235,6 +217,8 @@ static void LMEnsureWindow(void) {
     gOverlayWindow.hidden = NO;
 }
 
+// Khong con backdrop. Chi 2 layer FULL-SCREEN, hinh dang that su hien thi
+// duoc dieu khien 100% qua MASK (cach da chay on dinh truoc do).
 static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening) {
     LMForceClearOverlay();
     LMEnsureWindow();
@@ -242,80 +226,31 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     CGRect screen = gOverlayWindow.bounds;
     CGFloat duration = 0.45;
 
-    // KHONG con backdrop nua. Chi 2 layer: anh icon + mau he thong,
-    // ca hai co KICH THUOC THAT tang dan (khong phai full-screen-bi-cat).
-
-    NSArray *paths;
-    NSArray *boundsSteps;
-    LMBuildKeyframes(iconFrame, screen, opening, &paths, &boundsSteps);
-
-    CGRect startBounds = [boundsSteps.firstObject CGRectValue];
-
-    // Lop anh icon
     CAShapeLayer *maskShape = [CAShapeLayer layer];
+    maskShape.frame = screen;
+
     CALayer *iconLayer = [CALayer layer];
-    iconLayer.frame = startBounds;
+    iconLayer.frame = screen;
     iconLayer.contentsGravity = kCAGravityResizeAspectFill;
     if (iconImage) {
         iconLayer.contents = (__bridge id)iconImage.CGImage;
     } else {
         iconLayer.backgroundColor = [UIColor colorWithWhite:0.85 alpha:1.0].CGColor;
     }
-    maskShape.frame = screen;
-    // Mask nam trong he toa do window, nhung iconLayer nam trong he toa do
-    // rieng cua no (bat dau tu startBounds) - can dat mask.position bu tru.
-    maskShape.position = CGPointMake(-startBounds.origin.x, -startBounds.origin.y);
     iconLayer.mask = maskShape;
     [gOverlayWindow.layer addSublayer:iconLayer];
 
-    // Lop mau he thong (mo dan hien len sau)
     CAShapeLayer *maskShape2 = [CAShapeLayer layer];
+    maskShape2.frame = screen;
     CALayer *colorLayer = [CALayer layer];
-    colorLayer.frame = startBounds;
+    colorLayer.frame = screen;
     colorLayer.backgroundColor = LMSystemBackgroundColor().CGColor;
     colorLayer.opacity = 0.0;
-    maskShape2.frame = screen;
-    maskShape2.position = CGPointMake(-startBounds.origin.x, -startBounds.origin.y);
     colorLayer.mask = maskShape2;
     [gOverlayWindow.layer addSublayer:colorLayer];
 
-    // Animate frame (bounds+position) cua ca 2 layer theo dung kich thuoc that
-    NSMutableArray *boundsValues = [NSMutableArray array];
-    NSMutableArray *positionValues = [NSMutableArray array];
-    for (NSValue *v in boundsSteps) {
-        CGRect r = [v CGRectValue];
-        [boundsValues addObject:[NSValue valueWithCGRect:CGRectMake(0, 0, r.size.width, r.size.height)]];
-        [positionValues addObject:[NSValue valueWithCGPoint:CGPointMake(r.origin.x + r.size.width / 2.0,
-                                                                          r.origin.y + r.size.height / 2.0)]];
-    }
+    NSArray *paths = LMBuildKeyframePaths(iconFrame, screen, opening);
 
-    CAKeyframeAnimation *boundsAnim = [CAKeyframeAnimation animationWithKeyPath:@"bounds"];
-    boundsAnim.values = boundsValues;
-    boundsAnim.duration = duration;
-    boundsAnim.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
-    boundsAnim.fillMode = kCAFillModeForwards;
-    boundsAnim.removedOnCompletion = NO;
-
-    CAKeyframeAnimation *positionAnim = [CAKeyframeAnimation animationWithKeyPath:@"position"];
-    positionAnim.values = positionValues;
-    positionAnim.duration = duration;
-    positionAnim.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
-    positionAnim.fillMode = kCAFillModeForwards;
-    positionAnim.removedOnCompletion = NO;
-
-    CGRect endBounds = [boundsSteps.lastObject CGRectValue];
-    iconLayer.bounds = CGRectMake(0, 0, endBounds.size.width, endBounds.size.height);
-    iconLayer.position = CGPointMake(endBounds.origin.x + endBounds.size.width / 2.0,
-                                      endBounds.origin.y + endBounds.size.height / 2.0);
-    [iconLayer addAnimation:boundsAnim forKey:@"bounds"];
-    [iconLayer addAnimation:positionAnim forKey:@"position"];
-
-    colorLayer.bounds = iconLayer.bounds;
-    colorLayer.position = iconLayer.position;
-    [colorLayer addAnimation:boundsAnim forKey:@"bounds"];
-    [colorLayer addAnimation:positionAnim forKey:@"position"];
-
-    // Mask path (hinh dang meo) - van dinh nghia trong he toa do window
     CAKeyframeAnimation *pathAnim = [CAKeyframeAnimation animationWithKeyPath:@"path"];
     pathAnim.values = paths;
     pathAnim.duration = duration;
@@ -327,23 +262,6 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     [maskShape addAnimation:pathAnim forKey:@"morph"];
     maskShape2.path = (__bridge CGPathRef)paths.lastObject;
     [maskShape2 addAnimation:pathAnim forKey:@"morph"];
-
-    // Mask position cung phai animate de bu tru dung theo iconLayer dang di chuyen
-    CAKeyframeAnimation *maskPosAnim = [CAKeyframeAnimation animationWithKeyPath:@"position"];
-    NSMutableArray *maskPosValues = [NSMutableArray array];
-    for (NSValue *v in boundsSteps) {
-        CGRect r = [v CGRectValue];
-        [maskPosValues addObject:[NSValue valueWithCGPoint:CGPointMake(-r.origin.x, -r.origin.y)]];
-    }
-    maskPosAnim.values = maskPosValues;
-    maskPosAnim.duration = duration;
-    maskPosAnim.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
-    maskPosAnim.fillMode = kCAFillModeForwards;
-    maskPosAnim.removedOnCompletion = NO;
-    maskShape.position = CGPointMake(-endBounds.origin.x, -endBounds.origin.y);
-    [maskShape addAnimation:maskPosAnim forKey:@"posmorph"];
-    maskShape2.position = maskShape.position;
-    [maskShape2 addAnimation:maskPosAnim forKey:@"posmorph"];
 
     CAKeyframeAnimation *fadeAnim = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
     fadeAnim.values = @[@0.0, @0.0, @1.0, @1.0];
@@ -429,7 +347,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %end
 
 %ctor {
-    LMLog(@"=== LiquidMorph REAL v11 (no backdrop, real size) loaded | process: %@ | iOS %@ ===",
+    LMLog(@"=== LiquidMorph REAL v12 (stable mask, no backdrop) loaded | process: %@ | iOS %@ ===",
           [[NSProcessInfo processInfo] processName],
           [[UIDevice currentDevice] systemVersion]);
 }
