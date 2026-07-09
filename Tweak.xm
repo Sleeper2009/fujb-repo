@@ -114,6 +114,8 @@ static UIImage *LMRenderIconImage(UIView *iconView) {
 static LMTransitionState *gCurrentState = nil;
 static UIWindow *gOverlayWindow = nil;
 
+// Giai doan dau (0..growStart): hinh GIU NGUYEN y het icon that, dung yen,
+// khong meo khong nay. Chi sau growStart moi bat dau phong to + bien dang.
 static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL opening) {
     CGFloat iconCenterXNorm = (iconFrame.origin.x + iconFrame.size.width / 2.0) / screen.size.width;
     CGFloat iconCenterYNorm = (iconFrame.origin.y + iconFrame.size.height / 2.0) / screen.size.height;
@@ -123,10 +125,12 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
     CGFloat closeRight = iconCenterXNorm;
     CGFloat closeLeft = 1.0 - iconCenterXNorm;
 
-    NSInteger steps = 24;
+    NSInteger steps = 28;
     NSMutableArray *paths = [NSMutableArray array];
     CGFloat maxDelay = 0.4;
     CGFloat endRadius = 20.0;
+    CGFloat iconRadius = 13.0;
+    CGFloat growStart = 0.15;
 
     CGFloat bounceDirection = (iconCenterYNorm > 0.5) ? -1.0 : 1.0;
     CGFloat bounceAmount = 42.0;
@@ -144,55 +148,60 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
         CGFloat tRaw = (CGFloat)i / (CGFloat)steps;
         CGFloat t = opening ? tRaw : (1.0 - tRaw);
 
-        CGFloat topP = LMEdgeProgress(t, closeTop, maxDelay);
-        CGFloat bottomP = LMEdgeProgress(t, closeBottom, maxDelay);
-        CGFloat leftP = LMEdgeProgress(t, closeLeft, maxDelay);
-        CGFloat rightP = LMEdgeProgress(t, closeRight, maxDelay);
+        CGPathRef p;
 
-        CGFloat bounceEnvelope = sinf(MIN(t, 1.0) * M_PI) * bounceAmount * bounceDirection;
+        if (t < growStart) {
+            // Giai doan tinh: hinh = chinh xac icon, khong doi.
+            p = LMRoundedQuadPath(
+                CGPointMake(iconLeft, iconTop), CGPointMake(iconRight, iconTop),
+                CGPointMake(iconRight, iconBottom), CGPointMake(iconLeft, iconBottom),
+                iconRadius, iconRadius, iconRadius, iconRadius);
+        } else {
+            CGFloat t2 = (t - growStart) / (1.0 - growStart);
 
-        CGFloat topY = iconTop + (screenTop - iconTop) * topP + bounceEnvelope * (1.0 - topP);
-        CGFloat bottomY = iconBottom + (screenBottom - iconBottom) * bottomP + bounceEnvelope * (1.0 - bottomP);
+            CGFloat topP = LMEdgeProgress(t2, closeTop, maxDelay);
+            CGFloat bottomP = LMEdgeProgress(t2, closeBottom, maxDelay);
+            CGFloat leftP = LMEdgeProgress(t2, closeLeft, maxDelay);
+            CGFloat rightP = LMEdgeProgress(t2, closeRight, maxDelay);
 
-        CGFloat topLeftX = iconLeft + (screenLeft - iconLeft) * ((topP + leftP) * 0.5);
-        CGFloat topRightX = iconRight + (screenRight - iconRight) * ((topP + rightP) * 0.5);
-        CGFloat bottomLeftX = iconLeft + (screenLeft - iconLeft) * ((bottomP + leftP) * 0.5);
-        CGFloat bottomRightX = iconRight + (screenRight - iconRight) * ((bottomP + rightP) * 0.5);
+            CGFloat bounceEnvelope = sinf(MIN(t2, 1.0) * M_PI) * bounceAmount * bounceDirection;
 
-        CGPoint tl = CGPointMake(topLeftX, topY);
-        CGPoint tr = CGPointMake(topRightX, topY);
-        CGPoint br = CGPointMake(bottomRightX, bottomY);
-        CGPoint bl = CGPointMake(bottomLeftX, bottomY);
+            CGFloat topY = iconTop + (screenTop - iconTop) * topP + bounceEnvelope * (1.0 - topP);
+            CGFloat bottomY = iconBottom + (screenBottom - iconBottom) * bottomP + bounceEnvelope * (1.0 - bottomP);
 
-        CGFloat humpBase = LMHumpRadius(t);
+            CGFloat topLeftX = iconLeft + (screenLeft - iconLeft) * ((topP + leftP) * 0.5);
+            CGFloat topRightX = iconRight + (screenRight - iconRight) * ((topP + rightP) * 0.5);
+            CGFloat bottomLeftX = iconLeft + (screenLeft - iconLeft) * ((bottomP + leftP) * 0.5);
+            CGFloat bottomRightX = iconRight + (screenRight - iconRight) * ((bottomP + rightP) * 0.5);
 
-        CGFloat rTL = humpBase * (1.0 - MIN(topP, leftP)) + endRadius * MIN(topP, leftP);
-        CGFloat rTR = humpBase * (1.0 - MIN(topP, rightP)) + endRadius * MIN(topP, rightP);
-        CGFloat rBR = humpBase * (1.0 - MIN(bottomP, rightP)) + endRadius * MIN(bottomP, rightP);
-        CGFloat rBL = humpBase * (1.0 - MIN(bottomP, leftP)) + endRadius * MIN(bottomP, leftP);
+            CGPoint tl = CGPointMake(topLeftX, topY);
+            CGPoint tr = CGPointMake(topRightX, topY);
+            CGPoint br = CGPointMake(bottomRightX, bottomY);
+            CGPoint bl = CGPointMake(bottomLeftX, bottomY);
 
-        CGPathRef p = LMRoundedQuadPath(tl, tr, br, bl, rTL, rTR, rBR, rBL);
+            CGFloat humpBase = LMHumpRadius(t2);
+
+            CGFloat rTL = humpBase * (1.0 - MIN(topP, leftP)) + endRadius * MIN(topP, leftP);
+            CGFloat rTR = humpBase * (1.0 - MIN(topP, rightP)) + endRadius * MIN(topP, rightP);
+            CGFloat rBR = humpBase * (1.0 - MIN(bottomP, rightP)) + endRadius * MIN(bottomP, rightP);
+            CGFloat rBL = humpBase * (1.0 - MIN(bottomP, leftP)) + endRadius * MIN(bottomP, leftP);
+
+            p = LMRoundedQuadPath(tl, tr, br, bl, rTL, rTR, rBR, rBL);
+        }
+
         [paths addObject:(__bridge_transfer id)p];
     }
     return paths;
 }
 
-static void LMCancelCurrentIfAny(void) {
-    if (gCurrentState) {
-        [gCurrentState.backdrop removeFromSuperlayer];
-        [gCurrentState.maskShape removeAllAnimations];
-        [gCurrentState.iconLayer removeFromSuperlayer];
-        [gCurrentState.colorLayer removeFromSuperlayer];
-        gCurrentState = nil;
-    }
-    // Don dep cuong buc: xoa sach moi sublayer con sot lai tren overlay window,
-    // phong khi bien gCurrentState bi mat tham chieu nhung layer van con dinh.
+static void LMForceClearOverlay(void) {
     if (gOverlayWindow) {
         NSArray *sublayers = [gOverlayWindow.layer.sublayers copy];
         for (CALayer *l in sublayers) {
             [l removeFromSuperlayer];
         }
     }
+    gCurrentState = nil;
 }
 
 static void LMEnsureWindow(void) {
@@ -213,15 +222,12 @@ static void LMEnsureWindow(void) {
 }
 
 static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening) {
-    LMCancelCurrentIfAny();
+    LMForceClearOverlay();
     LMEnsureWindow();
 
     CGRect screen = gOverlayWindow.bounds;
     CGFloat duration = 0.45;
 
-    // Backdrop phu KIN toan man hinh trong SUOT thoi gian animation - che
-    // hoan toan animation goc cua he thong. Se bi xoa dung luc animation
-    // xong nho CATransaction completion block (khong dung timer nua).
     CALayer *backdrop = [CALayer layer];
     backdrop.frame = screen;
     backdrop.backgroundColor = LMSystemBackgroundColor().CGColor;
@@ -230,7 +236,6 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     CAShapeLayer *maskShape = [CAShapeLayer layer];
     maskShape.frame = screen;
 
-    // Lop 1: anh icon that (hien tu dau)
     CALayer *iconLayer = [CALayer layer];
     iconLayer.frame = screen;
     iconLayer.contentsGravity = kCAGravityResizeAspectFill;
@@ -242,8 +247,6 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     iconLayer.mask = maskShape;
     [gOverlayWindow.layer addSublayer:iconLayer];
 
-    // Lop 2: mau he thong dac, mo dan HIEN len sau (opacity 0 -> 1),
-    // dung CAShapeLayer rieng lam mask giong het lop 1 de luon khop nhau.
     CAShapeLayer *maskShape2 = [CAShapeLayer layer];
     maskShape2.frame = screen;
     CALayer *colorLayer = [CALayer layer];
@@ -255,26 +258,6 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
     NSArray *paths = LMBuildKeyframePaths(iconFrame, screen, opening);
 
-    LMTransitionState *state = [LMTransitionState new];
-    state.backdrop = backdrop;
-    state.maskShape = maskShape;
-    state.iconLayer = iconLayer;
-    state.colorLayer = colorLayer;
-    state.iconFrame = iconFrame;
-    state.isOpening = opening;
-    gCurrentState = state;
-
-    [CATransaction begin];
-    [CATransaction setCompletionBlock:^{
-        if (gCurrentState == state) {
-            [backdrop removeFromSuperlayer];
-            [iconLayer removeFromSuperlayer];
-            [colorLayer removeFromSuperlayer];
-            gCurrentState = nil;
-        }
-    }];
-
-    // Animate hinh dang (dung chung cho ca 2 mask)
     CAKeyframeAnimation *pathAnim = [CAKeyframeAnimation animationWithKeyPath:@"path"];
     pathAnim.values = paths;
     pathAnim.duration = duration;
@@ -288,8 +271,6 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     maskShape2.path = (__bridge CGPathRef)paths.lastObject;
     [maskShape2 addAnimation:pathAnim forKey:@"morph"];
 
-    // Icon hien ~0-55% thoi gian, roi mau he thong mo dan che len trong
-    // khoang 55%-66% (~0.05s cua 0.45s), giu nguyen den cuoi.
     CAKeyframeAnimation *fadeAnim = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
     fadeAnim.values = @[@0.0, @0.0, @1.0, @1.0];
     fadeAnim.keyTimes = @[@0.0, @0.55, @0.66, @1.0];
@@ -300,10 +281,28 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
     colorLayer.opacity = 1.0;
     [colorLayer addAnimation:fadeAnim forKey:@"fade"];
 
-    [CATransaction commit];
+    LMTransitionState *state = [LMTransitionState new];
+    state.backdrop = backdrop;
+    state.maskShape = maskShape;
+    state.iconLayer = iconLayer;
+    state.colorLayer = colorLayer;
+    state.iconFrame = iconFrame;
+    state.isOpening = opening;
+    gCurrentState = state;
 
     LMLog(@"Transition %@ played | frame: %@ | iconImage: %@",
           opening ? @"OPEN" : @"CLOSE", NSStringFromCGRect(iconFrame), iconImage ? @"yes" : @"nil");
+
+    // Don dep bang thoi gian chinh xac - KHONG dung CATransaction completion
+    // block nua (khong dang tin cay trong ngu canh hook SpringBoard nay).
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((duration + 0.02) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (gCurrentState == state) {
+            [backdrop removeFromSuperlayer];
+            [iconLayer removeFromSuperlayer];
+            [colorLayer removeFromSuperlayer];
+            gCurrentState = nil;
+        }
+    });
 }
 
 @interface SBIconView : UIView
@@ -347,7 +346,8 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 
 - (void)handleHomeButtonTap {
     @try {
-        LMLog(@"[close-test] handleHomeButtonTap fired | hasActiveState: %d", gCurrentState != nil);
+        LMLog(@"handleHomeButtonTap fired | hasActiveState: %d | isOpening: %d",
+              gCurrentState != nil, gCurrentState.isOpening);
         if (gCurrentState && gCurrentState.isOpening) {
             CGRect iconFrame = gCurrentState.iconFrame;
             LMPlayTransition(iconFrame, nil, NO);
@@ -361,17 +361,7 @@ static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening)
 %end
 
 %ctor {
-    LMLog(@"=== LiquidMorph REAL v9 (combined) loaded | process: %@ | iOS %@ ===",
+    LMLog(@"=== LiquidMorph REAL v10 loaded | process: %@ | iOS %@ ===",
           [[NSProcessInfo processInfo] processName],
           [[UIDevice currentDevice] systemVersion]);
-
-    // Chi LOG de doi chieu, KHONG tu dong trigger transition tu day - tranh
-    // bi kich hoat 2 lan (1 tu handleHomeButtonTap, 1 tu day) trong ban test nay.
-    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
-                                                        object:nil
-                                                         queue:nil
-                                                    usingBlock:^(NSNotification *note) {
-        LMLog(@"[close-test] UIApplicationDidBecomeActiveNotification fired | hasActiveState: %d",
-              gCurrentState != nil);
-    }];
 }
