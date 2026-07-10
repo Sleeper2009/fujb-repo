@@ -33,7 +33,6 @@ static BOOL gCaptureEnabled = NO;
 static void LMDescribeAnimation(CALayer *layer, NSString *key, CAAnimation *anim) {
     @try {
         NSString *layerClass = NSStringFromClass([layer class]);
-        NSString *layerDesc = [layer description];
         NSString *animClass = NSStringFromClass([anim class]);
         NSString *keyPath = @"?";
         NSString *valuesDesc = @"";
