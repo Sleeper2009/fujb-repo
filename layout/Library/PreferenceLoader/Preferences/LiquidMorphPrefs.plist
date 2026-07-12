@@ -1,0 +1,9 @@
+{
+    entry = {
+        cell = PSLinkCell;
+        detail = LMRootListController;
+        icon = "Icon.png";
+        label = "LiquidMorph";
+        bundle = "LiquidMorphPrefs";
+    };
+}
