@@ -1,3 +1,6 @@
+Được, đây là bản đầy đủ đã sửa, dán nguyên vào thay hết:
+
+```objc
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
@@ -25,7 +28,6 @@ static void LMLog(NSString *format, ...) {
     NSLog(@"[LiquidMorph] %@", message);
 }
 
-// ============ DOC CAI DAT TU SETTINGS APP ============
 static NSString *const kPrefDomain = @"com.furina.liquidmorph";
 
 static CGFloat gBounceAmount = 42.0;
@@ -350,4 +352,34 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
 - (void)_launchFromIconView:(id)iconView withActions:(id)actions {
     LMLog(@"_launchFromIconView:withActions: - boc CATransaction 0 duration");
     [CATransaction begin];
-    [CATransaction setDisableAc
+    [CATransaction setDisableActions:YES];
+    [CATransaction setAnimationDuration:0];
+    %orig;
+    [CATransaction commit];
+}
+
+- (void)iconManager:(id)manager launchIconForIconView:(id)iconView withActions:(id)actions {
+    LMLog(@"iconManager:launchIconForIconView:withActions: - boc CATransaction 0 duration");
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    [CATransaction setAnimationDuration:0];
+    %orig;
+    [CATransaction commit];
+}
+
+%end
+
+%ctor {
+    LMReloadSettings();
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
+        NULL, LMSettingsChangedCallback,
+        CFSTR("com.furina.liquidmorph/settingschanged"),
+        NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+
+    LMLog(@"=== LiquidMorph REAL v5 (with settings) loaded | process: %@ | iOS %@ ===",
+          [[NSProcessInfo processInfo] processName],
+          [[UIDevice currentDevice] systemVersion]);
+}
+```
+
+Build lại.
