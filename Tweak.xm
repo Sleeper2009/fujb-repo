@@ -304,7 +304,10 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
 %hook SBIconView
 
 - (void)_handleTap {
-    if (!gTweakEnabled) { %orig; return; }
+    if (!gTweakEnabled) {
+        %orig;
+        return;
+    }
     @try {
         id icon = [self valueForKey:@"icon"];
         NSString *bundleID = @"";
@@ -377,6 +380,3 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
           [[NSProcessInfo processInfo] processName],
           [[UIDevice currentDevice] systemVersion]);
 }
-```
-
-Build lại.
