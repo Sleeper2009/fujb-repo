@@ -1,6 +1,3 @@
-Được, đây là bản đầy đủ đã sửa, dán nguyên vào thay hết:
-
-```objc
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
