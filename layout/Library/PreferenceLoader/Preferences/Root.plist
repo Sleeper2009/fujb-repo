@@ -1,61 +1,14 @@
 {
     title = "LiquidMorph";
     specifiers = (
-        {
-            group = "LiquidMorph";
-            footerText = "Chinh sua hieu ung morph khi mo/dong ung dung. Thay doi ap dung ngay, khong can respring.";
-        },
-        {
-            key = "enabled";
-            title = "Bat hieu ung";
-            type = PSSwitchCell;
-            default = 1;
-            PostNotification = "com.furina.liquidmorph/settingschanged";
-        },
-        {
-            group = "Do nay (Bounce)";
-        },
-        {
-            key = "bounceAmount";
-            title = "Do nay";
-            type = PSSliderCell;
-            default = 42;
-            min = 0;
-            max = 100;
-            PostNotification = "com.furina.liquidmorph/settingschanged";
-        },
-        {
-            group = "Bo goc (Corner radius)";
-        },
-        {
-            key = "peakRadius";
-            title = "Bo goc cao nhat";
-            type = PSSliderCell;
-            default = 120;
-            min = 20;
-            max = 200;
-            PostNotification = "com.furina.liquidmorph/settingschanged";
-        },
-        {
-            key = "endRadius";
-            title = "Bo goc luc ket thuc";
-            type = PSSliderCell;
-            default = 20;
-            min = 0;
-            max = 60;
-            PostNotification = "com.furina.liquidmorph/settingschanged";
-        },
-        {
-            group = "Toc do";
-        },
-        {
-            key = "duration";
-            title = "Thoi luong animation (giay)";
-            type = PSSliderCell;
-            default = 0.45;
-            min = 0.15;
-            max = 1.0;
-            PostNotification = "com.furina.liquidmorph/settingschanged";
-        }
+        { group = "LiquidMorph"; footerText = "Chinh sua hieu ung morph khi mo/dong ung dung."; },
+        { key = "enabled"; title = "Bat hieu ung"; type = PSSwitchCell; default = 1; PostNotification = "com.furina.liquidmorph/settingschanged"; },
+        { group = "Do nay (Bounce)"; },
+        { key = "bounceAmount"; title = "Do nay"; type = PSSliderCell; default = 42; min = 0; max = 100; PostNotification = "com.furina.liquidmorph/settingschanged"; },
+        { group = "Bo goc"; },
+        { key = "peakRadius"; title = "Bo goc cao nhat"; type = PSSliderCell; default = 120; min = 20; max = 200; PostNotification = "com.furina.liquidmorph/settingschanged"; },
+        { key = "endRadius"; title = "Bo goc luc ket thuc"; type = PSSliderCell; default = 20; min = 0; max = 60; PostNotification = "com.furina.liquidmorph/settingschanged"; },
+        { group = "Toc do"; },
+        { key = "duration"; title = "Thoi luong (giay)"; type = PSSliderCell; default = 0.45; min = 0.15; max = 1.0; PostNotification = "com.furina.liquidmorph/settingschanged"; }
     );
 }
