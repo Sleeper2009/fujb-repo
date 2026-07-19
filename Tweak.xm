@@ -33,7 +33,26 @@ static CGFloat gEndRadius = 20.0;
 static CGFloat gDuration = 0.45;
 static BOOL gTweakEnabled = YES;
 
+// Doc truc tiep tu file plist tren dia - phong khi CFPreferences bi lech
+// domain do RootHide/rootless container khac nhau giua app Cai dat va
+// tien trinh SpringBoard.
+static NSDictionary *LMReadRawPlist(void) {
+    NSArray *candidatePaths = @[
+        @"/var/mobile/Library/Preferences/com.furina.liquidmorph.plist",
+        [NSString stringWithFormat:@"%@/Library/Preferences/com.furina.liquidmorph.plist", NSHomeDirectory()]
+    ];
+    for (NSString *path in candidatePaths) {
+        NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
+        if (dict) return dict;
+    }
+    return nil;
+}
+
 static CGFloat LMPrefFloat(NSString *key, CGFloat fallback) {
+    NSDictionary *raw = LMReadRawPlist();
+    if (raw && raw[key]) {
+        return [raw[key] doubleValue];
+    }
     CFPropertyListRef val = CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)kPrefDomain);
     if (!val) return fallback;
     CGFloat result = fallback;
@@ -45,6 +64,10 @@ static CGFloat LMPrefFloat(NSString *key, CGFloat fallback) {
 }
 
 static BOOL LMPrefBool(NSString *key, BOOL fallback) {
+    NSDictionary *raw = LMReadRawPlist();
+    if (raw && raw[key]) {
+        return [raw[key] boolValue];
+    }
     CFPropertyListRef val = CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)kPrefDomain);
     if (!val) return fallback;
     BOOL result = CFBooleanGetValue((CFBooleanRef)val);
@@ -63,8 +86,28 @@ static void LMReloadSettings(void) {
           gTweakEnabled, gBounceAmount, gPeakRadius, gEndRadius, gDuration);
 }
 
+static void LMWriteDefault(NSString *key, id value) {
+    CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFPropertyListRef)value, (__bridge CFStringRef)kPrefDomain);
+}
+
 static void LMSettingsChangedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     LMReloadSettings();
+}
+
+static void LMResetCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    LMWriteDefault(@"enabled", @YES);
+    LMWriteDefault(@"bounceAmount", @42.0);
+    LMWriteDefault(@"peakRadius", @120.0);
+    LMWriteDefault(@"endRadius", @20.0);
+    LMWriteDefault(@"duration", @0.45);
+    CFPreferencesAppSynchronize((__bridge CFStringRef)kPrefDomain);
+    LMLog(@"Da dat lai mac dinh");
+    LMReloadSettings();
+}
+
+static void LMRespringCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    LMLog(@"Nhan yeu cau respring tu Settings");
+    exit(0);
 }
 
 static CGPathRef LMRoundedQuadPath(CGPoint tl, CGPoint tr, CGPoint br, CGPoint bl,
@@ -350,7 +393,7 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
 }
 
 - (void)_launchFromIconView:(id)iconView withActions:(id)actions {
-    LMLog(@"_launchFromIconView:withActions: - boc CATransaction 0 duration");
+    LMLog(@"_launchFromIconView:withActions: - CATransaction 0 duration");
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     [CATransaction setAnimationDuration:0];
@@ -359,7 +402,7 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
 }
 
 - (void)iconManager:(id)manager launchIconForIconView:(id)iconView withActions:(id)actions {
-    LMLog(@"iconManager:launchIconForIconView:withActions: - boc CATransaction 0 duration");
+    LMLog(@"iconManager:launchIconForIconView:withActions: - CATransaction 0 duration");
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     [CATransaction setAnimationDuration:0];
@@ -374,6 +417,16 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
         NULL, LMSettingsChangedCallback,
         CFSTR("com.furina.liquidmorph/settingschanged"),
+        NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
+        NULL, LMResetCallback,
+        CFSTR("com.furina.liquidmorph/reset"),
+        NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
+        NULL, LMRespringCallback,
+        CFSTR("com.furina.liquidmorph/respring"),
         NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
 
     LMLog(@"=== LiquidMorph REAL v5 (with settings) loaded | process: %@ | iOS %@ ===",
