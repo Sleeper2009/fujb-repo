@@ -17,3 +17,13 @@ Filename: ./LiquidSiri-1.1.0-rootless.deb
 Section: Tweaks
 Size: 939022
 Description: Giao diện Siri ios 27
+
+Package: o2proVH.deb
+Name: o2Pro-VH
+Version: 1.1.0
+Architecture: iphoneos-arm64
+Maintainer: 
+Filename: o2proVH.deb
+Section: Tweaks
+Size: 939022
+Description: o2pro việt hoá 
