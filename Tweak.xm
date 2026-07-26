@@ -2,8 +2,56 @@
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
 
-static NSString *const kLogPath = @"/var/mobile/Documents/LiquidMorphExtended.log";
+// --- KHAI BÁO INTERFACE LÊN ĐẦU FILE ---
+@interface LMTransitionState : NSObject
+@property (nonatomic, strong) CAShapeLayer *maskShape;
+@property (nonatomic, strong) CALayer *contentLayer;
+@property (nonatomic, assign) CGRect iconFrame;
+@property (nonatomic, copy) NSString *bundleID;
+@property (nonatomic, assign) BOOL isOpening;
+@property (nonatomic, strong) NSDate *timestamp;
+@property (nonatomic, assign) BOOL isCleanedUp;
+@end
 
+@implementation LMTransitionState
+- (instancetype)init {
+    if ((self = [super init])) {
+        _timestamp = [NSDate date];
+        _isCleanedUp = NO;
+    }
+    return self;
+}
+@end
+
+@interface SBIconView : UIView
+- (id)icon;
+@end
+
+@interface SBIconController : NSObject
+- (void)handleHomeButtonTap;
+- (void)_launchFromIconView:(id)iconView withActions:(id)actions;
+- (void)iconManager:(id)manager launchIconForIconView:(id)iconView withActions:(id)actions;
+@end
+
+// --- HẰNG SỐ VÀ BIẾN TOÀN CỤC ---
+static NSString *const kLogPath = @"/var/mobile/Documents/LiquidMorphExtended.log";
+static NSString *const kPrefDomain = @"com.furina.liquidmorph";
+
+static CGFloat gBounceAmount = 26.0;
+static CGFloat gPeakRadius = 90.0;
+static CGFloat gEndRadius = 14.0;
+static CGFloat gDuration = 0.38;
+static BOOL gTweakEnabled = YES;
+static BOOL gAdvancedLogging = YES;
+static CGFloat gDampingRatio = 0.82;
+static CGFloat gInitialVelocity = 0.5;
+static BOOL gUseMetalOptimization = YES;
+static NSUInteger gMaxKeyframeSteps = 24;
+
+static LMTransitionState *gCurrentState = nil;
+static UIWindow *gOverlayWindow = nil;
+
+// --- HÀM HỖ TRỢ XỬ LÝ (HELPER FUNCTIONS) ---
 static void LMLog(NSString *format, ...) {
     @try {
         va_list args;
@@ -23,19 +71,6 @@ static void LMLog(NSString *format, ...) {
         }
     } @catch (NSException *e) {}
 }
-
-static NSString *const kPrefDomain = @"com.furina.liquidmorph";
-
-static CGFloat gBounceAmount = 26.0;
-static CGFloat gPeakRadius = 90.0;
-static CGFloat gEndRadius = 14.0;
-static CGFloat gDuration = 0.38;
-static BOOL gTweakEnabled = YES;
-static BOOL gAdvancedLogging = YES;
-static CGFloat gDampingRatio = 0.82;
-static CGFloat gInitialVelocity = 0.5;
-static BOOL gUseMetalOptimization = YES;
-static NSUInteger gMaxKeyframeSteps = 24;
 
 static NSDictionary *LMReadRawPlist(void) {
     @try {
@@ -208,28 +243,6 @@ static UIImage *LMLoadAppSnapshot(NSString *bundleID) {
     }
     return nil;
 }
-
-@interface LMTransitionState : NSObject
-@property (nonatomic, strong) CAShapeLayer *maskShape;
-@property (nonatomic, strong) CALayer *contentLayer;
-@property (nonatomic, assign) CGRect iconFrame;
-@property (nonatomic, copy) NSString *bundleID;
-@property (nonatomic, assign) BOOL isOpening;
-@property (nonatomic, strong) NSDate *timestamp;
-@property (nonatomic, assign) BOOL isCleanedUp;
-@end
-@implementation LMTransitionState
-- (instancetype)init {
-    if ((self = [super init])) {
-        _timestamp = [NSDate date];
-        _isCleanedUp = NO;
-    }
-    return self;
-}
-end
-
-static LMTransitionState *gCurrentState = nil;
-static UIWindow *gOverlayWindow = nil;
 
 static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL opening) {
     NSMutableArray *paths = [NSMutableArray array];
@@ -429,9 +442,7 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
     }
 }
 
-@interface SBIconView : UIView
-- (id)icon;
-@end
+// --- LOGOS HOOKS ---
 
 %hook SBIconView
 
@@ -476,17 +487,8 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
 
 %end
 
-@interface SBIconController : NSObject
-- (void)handleHomeButtonTap;
-- (void)_launchFromIconView:(id)iconView withActions:(id)actions;
-- (void)iconManager:(id)manager launchIconForIconView:(id)iconView withActions:(id)actions;
-@end
-
 %hook SBIconController
 
 - (void)handleHomeButtonTap {
     @try {
         if (gTweakEnabled && gCurrentState && gCurrentState.isOpening) {
-            CGRect iconFrame = gCurrentState.iconFrame;
-            NSString *bundleID = gCurrentState.bundleID;
-            LMPlayTransition(iconFrame
