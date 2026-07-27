@@ -2,7 +2,6 @@
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
 
-// --- KHAI BÁO INTERFACE LÊN ĐẦU FILE ---
 @interface LMTransitionState : NSObject
 @property (nonatomic, strong) CAShapeLayer *maskShape;
 @property (nonatomic, strong) CALayer *contentLayer;
@@ -33,7 +32,6 @@
 - (void)iconManager:(id)manager launchIconForIconView:(id)iconView withActions:(id)actions;
 @end
 
-// --- HẰNG SỐ VÀ BIẾN TOÀN CỤC ---
 static NSString *const kLogPath = @"/var/mobile/Documents/LiquidMorphExtended.log";
 static NSString *const kPrefDomain = @"com.furina.liquidmorph";
 
@@ -51,7 +49,6 @@ static NSUInteger gMaxKeyframeSteps = 24;
 static LMTransitionState *gCurrentState = nil;
 static UIWindow *gOverlayWindow = nil;
 
-// --- HÀM HỖ TRỢ XỬ LÝ (HELPER FUNCTIONS) ---
 static void LMLog(NSString *format, ...) {
     @try {
         va_list args;
@@ -90,8 +87,12 @@ static CGFloat LMPrefFloat(NSString *key, CGFloat fallback) {
     @try {
         NSDictionary *raw = LMReadRawPlist();
         if (raw && raw[key]) return [raw[key] doubleValue];
-        CFPropertyListRef val = CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)kPrefDomain);
+        
+        CFStringRef keyRef = (__bridge CFStringRef)key;
+        CFStringRef appRef = (__bridge CFStringRef)kPrefDomain;
+        CFPropertyListRef val = CFPreferencesCopyAppValue(keyRef, appRef);
         if (!val) return fallback;
+        
         CGFloat result = fallback;
         if (CFGetTypeID(val) == CFNumberGetTypeID()) {
             CFNumberGetValue((CFNumberRef)val, kCFNumberDoubleType, &result);
@@ -107,8 +108,12 @@ static BOOL LMPrefBool(NSString *key, BOOL fallback) {
     @try {
         NSDictionary *raw = LMReadRawPlist();
         if (raw && raw[key]) return [raw[key] boolValue];
-        CFPropertyListRef val = CFPreferencesCopyAppValue((__bridge CFStringRef)key, (__bridge CFStringRef)kPrefDomain);
+        
+        CFStringRef keyRef = (__bridge CFStringRef)key;
+        CFStringRef appRef = (__bridge CFStringRef)kPrefDomain;
+        CFPropertyListRef val = CFPreferencesCopyAppValue(keyRef, appRef);
         if (!val) return fallback;
+        
         BOOL result = CFBooleanGetValue((CFBooleanRef)val);
         CFRelease(val);
         return result;
@@ -256,7 +261,6 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
         CGFloat closeLeft = 1.0 - iconCenterXNorm;
 
         NSUInteger steps = gMaxKeyframeSteps;
-        [paths capacity:steps + 1];
         CGFloat maxDelay = 0.3;
         CGFloat endRadius = gEndRadius;
 
@@ -306,7 +310,7 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
 
             CGPathRef p = LMRoundedQuadPath(tl, tr, br, bl, rTL, rTR, rBR, rBL);
             if (p) {
-                [paths addObject:(__bridge_transfer id)p];
+                [paths addObject:CFBridgingRelease(p)];
             }
         }
     } @catch (NSException *e) {
@@ -442,8 +446,6 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
     }
 }
 
-// --- LOGOS HOOKS ---
-
 %hook SBIconView
 
 - (void)_handleTap {
@@ -456,9 +458,9 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
         NSString *bundleID = @"";
         if (icon) {
             if ([icon respondsToSelector:@selector(nodeIdentifier)]) {
-                bundleID = [icon performSelector:@selector(nodeIdentifier)] ?: @"";
+                bundleID = ((id (*)(id, SEL))objc_msgSend)(icon, @selector(nodeIdentifier)) ?: @"";
             } else if ([icon respondsToSelector:@selector(bundleIdentifier)]) {
-                bundleID = [icon performSelector:@selector(bundleIdentifier)] ?: @"";
+                bundleID = ((id (*)(id, SEL))objc_msgSend)(icon, @selector(bundleIdentifier)) ?: @"";
             }
         }
         CGRect frameInWindow = [self.window convertRect:self.bounds fromView:self];
@@ -491,4 +493,4 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
 
 - (void)handleHomeButtonTap {
     @try {
-        if (gTweakEnabled && gCurrentState && gCurrentState.isOpening) {
+        if (gTweakEnabled && gCurrentState && 
