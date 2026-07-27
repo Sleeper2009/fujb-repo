@@ -446,6 +446,8 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
     }
 }
 
+// --- LOGOS HOOKS ---
+
 %hook SBIconView
 
 - (void)_handleTap {
@@ -493,4 +495,46 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
 
 - (void)handleHomeButtonTap {
     @try {
-        if (gTweakEnabled && gCurrentState && 
+        if (gTweakEnabled && gCurrentState && gCurrentState.isOpening) {
+            LMPlayTransition(gCurrentState.iconFrame, gCurrentState.bundleID, NO);
+        }
+    } @catch (NSException *e) {
+        if (gAdvancedLogging) LMLog(@"Error in handleHomeButtonTap: %@", e);
+    }
+    %orig;
+}
+
+%end
+
+%ctor {
+    @autoreleasepool {
+        LMReloadSettings();
+        
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            NULL,
+            (CFNotificationCallback)LMSettingsChangedCallback,
+            CFSTR("com.furina.liquidmorph/settingschanged"),
+            NULL,
+            CFNotificationSuspensionBehaviorDeliverImmediately
+        );
+        
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            NULL,
+            (CFNotificationCallback)LMResetCallback,
+            CFSTR("com.furina.liquidmorph/reset"),
+            NULL,
+            CFNotificationSuspensionBehaviorDeliverImmediately
+        );
+        
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            NULL,
+            (CFNotificationCallback)LMRespringCallback,
+            CFSTR("com.furina.liquidmorph/respring"),
+            NULL,
+            CFNotificationSuspensionBehaviorDeliverImmediately
+        );
+    }
+}
