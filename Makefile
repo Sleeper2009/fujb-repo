@@ -1,17 +1,13 @@
-ifndef THEOS
-$(error THEOS is not set)
-endif
-
-TARGET := iphone:clang:16.5:14.0
-INSTALL_TARGET_PROCESSES = backboardd
-ARCHS = arm64 arm64e
-
-include $(THEOS)/makefiles/common.mk
-
-TWEAK_NAME = LiquidMorph
-
-LiquidMorph_FILES = Tweak.xm
-LiquidMorph_CFLAGS = -fobjc-arc
-LiquidMorph_FRAMEWORKS = UIKit
-
-include $(THEOS_MAKE_PATH)/tweak.mk
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Filter</key>
+    <dict>
+        <key>Bundles</key>
+        <array>
+            <string>com.apple.springboard</string>
+        </array>
+    </dict>
+</dict>
+</plis
