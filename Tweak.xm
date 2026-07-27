@@ -1,6 +1,15 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #import <QuartzCore/QuartzCore.h>
+
+// --- SUPPORT FOR ROOTLESS & ROOTHIDE ---
+#if __has_include(<rootless.h>)
+    #import <rootless.h>
+    #define JB_PATH(path) jbroot(path)
+#else
+    #define JB_PATH(path) (@"/var/jb" path)
+#endif
 
 @interface LMTransitionState : NSObject
 @property (nonatomic, strong) CAShapeLayer *maskShape;
@@ -28,11 +37,8 @@
 
 @interface SBIconController : NSObject
 - (void)handleHomeButtonTap;
-- (void)_launchFromIconView:(id)iconView withActions:(id)actions;
-- (void)iconManager:(id)manager launchIconForIconView:(id)iconView withActions:(id)actions;
 @end
 
-static NSString *const kLogPath = @"/var/mobile/Documents/LiquidMorphExtended.log";
 static NSString *const kPrefDomain = @"com.furina.liquidmorph";
 
 static CGFloat gBounceAmount = 26.0;
@@ -40,7 +46,7 @@ static CGFloat gPeakRadius = 90.0;
 static CGFloat gEndRadius = 14.0;
 static CGFloat gDuration = 0.38;
 static BOOL gTweakEnabled = YES;
-static BOOL gAdvancedLogging = YES;
+static BOOL gAdvancedLogging = NO; // Mặc định tắt để tối ưu hiệu năng
 static CGFloat gDampingRatio = 0.82;
 static CGFloat gInitialVelocity = 0.5;
 static BOOL gUseMetalOptimization = YES;
@@ -49,18 +55,34 @@ static NSUInteger gMaxKeyframeSteps = 24;
 static LMTransitionState *gCurrentState = nil;
 static UIWindow *gOverlayWindow = nil;
 
+// --- DYNAMIC PATH FOR LOGS & PREFS ---
+static NSString *LMGetLogPath(void) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *rootlessPath = JB_PATH(@"/var/mobile/Documents/LiquidMorphExtended.log");
+    if ([fm fileExistsAtPath:@"/var/jb"]) {
+        return rootlessPath;
+    }
+    return @"/var/mobile/Documents/LiquidMorphExtended.log";
+}
+
 static void LMLog(NSString *format, ...) {
+    if (!gAdvancedLogging) return;
     @try {
         va_list args;
         va_start(args, format);
         NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
         va_end(args);
+        
         NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
         formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
         NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [formatter stringFromDate:[NSDate date]], message];
+        
+        NSString *logPath = LMGetLogPath();
         NSFileManager *fm = [NSFileManager defaultManager];
-        if (![fm fileExistsAtPath:kLogPath]) [fm createFileAtPath:kLogPath contents:nil attributes:nil];
-        NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:kLogPath];
+        if (![fm fileExistsAtPath:logPath]) {
+            [fm createFileAtPath:logPath contents:nil attributes:nil];
+        }
+        NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:logPath];
         if (handle) {
             [handle seekToEndOfFile];
             [handle writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
@@ -72,8 +94,8 @@ static void LMLog(NSString *format, ...) {
 static NSDictionary *LMReadRawPlist(void) {
     @try {
         NSArray *candidatePaths = @[
-            @"/var/mobile/Library/Preferences/com.furina.liquidmorph.plist",
-            [NSString stringWithFormat:@"%@/Library/Preferences/com.furina.liquidmorph.plist", NSHomeDirectory()]
+            JB_PATH(@"/var/mobile/Library/Preferences/com.furina.liquidmorph.plist"),
+            @"/var/mobile/Library/Preferences/com.furina.liquidmorph.plist"
         ];
         for (NSString *path in candidatePaths) {
             NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
@@ -126,7 +148,7 @@ static void LMReloadSettings(void) {
     @try {
         CFPreferencesAppSynchronize((__bridge CFStringRef)kPrefDomain);
         gTweakEnabled = LMPrefBool(@"enabled", YES);
-        gAdvancedLogging = LMPrefBool(@"advancedLogging", YES);
+        gAdvancedLogging = LMPrefBool(@"advancedLogging", NO);
         gBounceAmount = LMPrefFloat(@"bounceAmount", 26.0);
         gPeakRadius = LMPrefFloat(@"peakRadius", 90.0);
         gEndRadius = LMPrefFloat(@"endRadius", 14.0);
@@ -150,7 +172,7 @@ static void LMSettingsChangedCallback(CFNotificationCenterRef center, void *obse
 static void LMResetCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     @try {
         LMWriteDefault(@"enabled", @YES);
-        LMWriteDefault(@"advancedLogging", @YES);
+        LMWriteDefault(@"advancedLogging", @NO);
         LMWriteDefault(@"bounceAmount", @26.0);
         LMWriteDefault(@"peakRadius", @90.0);
         LMWriteDefault(@"endRadius", @14.0);
@@ -232,7 +254,7 @@ static CGFloat LMHumpRadius(CGFloat t) {
 static UIImage *LMLoadAppSnapshot(NSString *bundleID) {
     if (bundleID.length == 0) return nil;
     @try {
-        NSString *dir = [NSString stringWithFormat:@"/var/mobile/Library/Caches/Snapshots/%@", bundleID];
+        NSString *dir = JB_PATH([NSString stringWithFormat:@"/var/mobile/Library/Caches/Snapshots/%@", bundleID]);
         NSFileManager *fm = [NSFileManager defaultManager];
         NSArray *files = [fm contentsOfDirectoryAtPath:dir error:nil];
         if (files.count == 0) return nil;
@@ -456,7 +478,11 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
         return;
     }
     @try {
-        id icon = [self valueForKey:@"icon"];
+        id icon = nil;
+        if ([self respondsToSelector:@selector(icon)]) {
+            icon = [self icon];
+        }
+        
         NSString *bundleID = @"";
         if (icon) {
             if ([icon respondsToSelector:@selector(nodeIdentifier)]) {
@@ -468,73 +494,4 @@ static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening)
         CGRect frameInWindow = [self.window convertRect:self.bounds fromView:self];
         LMPlayTransition(frameInWindow, bundleID, YES);
     } @catch (NSException *e) {
-        if (gAdvancedLogging) LMLog(@"Error in SBIconView _handleTap hook: %@", e);
-    }
-    %orig;
-}
-
-%end
-
-%hook SBUIController
-
-- (void)animateApplicationLaunch:(id)arg1 withActions:(id)arg2 {
-    @try {
-        [CATransaction begin];
-        [CATransaction setDisableActions:YES];
-        %orig;
-        [CATransaction commit];
-    } @catch (NSException *e) {
-        if (gAdvancedLogging) LMLog(@"Error in SBUIController animateApplicationLaunch: %@", e);
-        %orig;
-    }
-}
-
-%end
-
-%hook SBIconController
-
-- (void)handleHomeButtonTap {
-    @try {
-        if (gTweakEnabled && gCurrentState && gCurrentState.isOpening) {
-            LMPlayTransition(gCurrentState.iconFrame, gCurrentState.bundleID, NO);
-        }
-    } @catch (NSException *e) {
-        if (gAdvancedLogging) LMLog(@"Error in handleHomeButtonTap: %@", e);
-    }
-    %orig;
-}
-
-%end
-
-%ctor {
-    @autoreleasepool {
-        LMReloadSettings();
-        
-        CFNotificationCenterAddObserver(
-            CFNotificationCenterGetDarwinNotifyCenter(),
-            NULL,
-            (CFNotificationCallback)LMSettingsChangedCallback,
-            CFSTR("com.furina.liquidmorph/settingschanged"),
-            NULL,
-            CFNotificationSuspensionBehaviorDeliverImmediately
-        );
-        
-        CFNotificationCenterAddObserver(
-            CFNotificationCenterGetDarwinNotifyCenter(),
-            NULL,
-            (CFNotificationCallback)LMResetCallback,
-            CFSTR("com.furina.liquidmorph/reset"),
-            NULL,
-            CFNotificationSuspensionBehaviorDeliverImmediately
-        );
-        
-        CFNotificationCenterAddObserver(
-            CFNotificationCenterGetDarwinNotifyCenter(),
-            NULL,
-            (CFNotificationCallback)LMRespringCallback,
-            CFSTR("com.furina.liquidmorph/respring"),
-            NULL,
-            CFNotificationSuspensionBehaviorDeliverImmediately
-        );
-    }
-}
+        if (gAdva
