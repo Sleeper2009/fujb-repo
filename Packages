@@ -28,12 +28,3 @@ Section: Tweaks
 Size: 13309788
 Description: o2pro việt hoá 
 
-Package: 26Cam
-Name: 26Cam
-Version: 1.1.0
-Architecture: iphoneos-arm64
-Maintainer: 
-Filename: 123456889com.ngkhoi.26cam_0.0.1-151+debug_iphoneos-arm64.deb
-Section: Tweaks
-Size: 150018
-Description: Giao diện camera iOS 26
