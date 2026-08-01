@@ -1,230 +1,59 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
-#import <objc/message.h>
 #import <QuartzCore/QuartzCore.h>
 
-// --- SUPPORT FOR ROOTLESS & ROOTHIDE ---
-#if __has_include(<rootless.h>)
-    #import <rootless.h>
-    #define JB_PATH(path) jbroot(path)
-#else
-    #define JB_PATH(path) (@"/var/jb" path)
-#endif
-
-@interface LMTransitionState : NSObject
-@property (nonatomic, strong) CAShapeLayer *maskShape;
-@property (nonatomic, strong) CALayer *contentLayer;
-@property (nonatomic, assign) CGRect iconFrame;
-@property (nonatomic, copy) NSString *bundleID;
-@property (nonatomic, assign) BOOL isOpening;
-@property (nonatomic, strong) NSDate *timestamp;
-@property (nonatomic, assign) BOOL isCleanedUp;
-@end
-
-@implementation LMTransitionState
-- (instancetype)init {
-    if ((self = [super init])) {
-        _timestamp = [NSDate date];
-        _isCleanedUp = NO;
-    }
-    return self;
-}
-@end
-
-@interface SBIconView : UIView
-- (id)icon;
-@end
-
-@interface SBIconController : NSObject
-- (void)handleHomeButtonTap;
-@end
-
-static NSString *const kPrefDomain = @"com.furina.liquidmorph";
-
-static CGFloat gBounceAmount = 26.0;
-static CGFloat gPeakRadius = 90.0;
-static CGFloat gEndRadius = 14.0;
-static CGFloat gDuration = 0.38;
-static BOOL gTweakEnabled = YES;
-static BOOL gAdvancedLogging = NO; // Mặc định tắt để tối ưu hiệu năng
-static CGFloat gDampingRatio = 0.82;
-static CGFloat gInitialVelocity = 0.5;
-static BOOL gUseMetalOptimization = YES;
-static NSUInteger gMaxKeyframeSteps = 24;
-
-static LMTransitionState *gCurrentState = nil;
-static UIWindow *gOverlayWindow = nil;
-
-// --- DYNAMIC PATH FOR LOGS & PREFS ---
-static NSString *LMGetLogPath(void) {
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *rootlessPath = JB_PATH(@"/var/mobile/Documents/LiquidMorphExtended.log");
-    if ([fm fileExistsAtPath:@"/var/jb"]) {
-        return rootlessPath;
-    }
-    return @"/var/mobile/Documents/LiquidMorphExtended.log";
-}
+static NSString *const kLogPath = @"/var/mobile/Documents/LiquidMorph.log";
 
 static void LMLog(NSString *format, ...) {
-    if (!gAdvancedLogging) return;
+    va_list args;
+    va_start(args, format);
+    NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
+    NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [formatter stringFromDate:[NSDate date]], message];
     @try {
-        va_list args;
-        va_start(args, format);
-        NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
-        va_end(args);
-        
-        NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
-        formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
-        NSString *line = [NSString stringWithFormat:@"[%@] %@\n", [formatter stringFromDate:[NSDate date]], message];
-        
-        NSString *logPath = LMGetLogPath();
         NSFileManager *fm = [NSFileManager defaultManager];
-        if (![fm fileExistsAtPath:logPath]) {
-            [fm createFileAtPath:logPath contents:nil attributes:nil];
-        }
-        NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:logPath];
+        if (![fm fileExistsAtPath:kLogPath]) [fm createFileAtPath:kLogPath contents:nil attributes:nil];
+        NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:kLogPath];
         if (handle) {
             [handle seekToEndOfFile];
             [handle writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
             [handle closeFile];
         }
-    } @catch (NSException *e) {}
-}
-
-static NSDictionary *LMReadRawPlist(void) {
-    @try {
-        NSArray *candidatePaths = @[
-            JB_PATH(@"/var/mobile/Library/Preferences/com.furina.liquidmorph.plist"),
-            @"/var/mobile/Library/Preferences/com.furina.liquidmorph.plist"
-        ];
-        for (NSString *path in candidatePaths) {
-            NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
-            if (dict) return dict;
-        }
-    } @catch (NSException *e) {}
-    return nil;
-}
-
-static CGFloat LMPrefFloat(NSString *key, CGFloat fallback) {
-    @try {
-        NSDictionary *raw = LMReadRawPlist();
-        if (raw && raw[key]) return [raw[key] doubleValue];
-        
-        CFStringRef keyRef = (__bridge CFStringRef)key;
-        CFStringRef appRef = (__bridge CFStringRef)kPrefDomain;
-        CFPropertyListRef val = CFPreferencesCopyAppValue(keyRef, appRef);
-        if (!val) return fallback;
-        
-        CGFloat result = fallback;
-        if (CFGetTypeID(val) == CFNumberGetTypeID()) {
-            CFNumberGetValue((CFNumberRef)val, kCFNumberDoubleType, &result);
-        }
-        CFRelease(val);
-        return result;
-    } @catch (NSException *e) {
-        return fallback;
-    }
-}
-
-static BOOL LMPrefBool(NSString *key, BOOL fallback) {
-    @try {
-        NSDictionary *raw = LMReadRawPlist();
-        if (raw && raw[key]) return [raw[key] boolValue];
-        
-        CFStringRef keyRef = (__bridge CFStringRef)key;
-        CFStringRef appRef = (__bridge CFStringRef)kPrefDomain;
-        CFPropertyListRef val = CFPreferencesCopyAppValue(keyRef, appRef);
-        if (!val) return fallback;
-        
-        BOOL result = CFBooleanGetValue((CFBooleanRef)val);
-        CFRelease(val);
-        return result;
-    } @catch (NSException *e) {
-        return fallback;
-    }
-}
-
-static void LMReloadSettings(void) {
-    @try {
-        CFPreferencesAppSynchronize((__bridge CFStringRef)kPrefDomain);
-        gTweakEnabled = LMPrefBool(@"enabled", YES);
-        gAdvancedLogging = LMPrefBool(@"advancedLogging", NO);
-        gBounceAmount = LMPrefFloat(@"bounceAmount", 26.0);
-        gPeakRadius = LMPrefFloat(@"peakRadius", 90.0);
-        gEndRadius = LMPrefFloat(@"endRadius", 14.0);
-        gDuration = LMPrefFloat(@"duration", 0.38);
-        gDampingRatio = LMPrefFloat(@"dampingRatio", 0.82);
-        gInitialVelocity = LMPrefFloat(@"initialVelocity", 0.5);
-        gUseMetalOptimization = LMPrefBool(@"useMetalOptimization", YES);
-    } @catch (NSException *e) {}
-}
-
-static void LMWriteDefault(NSString *key, id value) {
-    @try {
-        CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFPropertyListRef)value, (__bridge CFStringRef)kPrefDomain);
-    } @catch (NSException *e) {}
-}
-
-static void LMSettingsChangedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    LMReloadSettings();
-}
-
-static void LMResetCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    @try {
-        LMWriteDefault(@"enabled", @YES);
-        LMWriteDefault(@"advancedLogging", @NO);
-        LMWriteDefault(@"bounceAmount", @26.0);
-        LMWriteDefault(@"peakRadius", @90.0);
-        LMWriteDefault(@"endRadius", @14.0);
-        LMWriteDefault(@"duration", @0.38);
-        LMWriteDefault(@"dampingRatio", @0.82);
-        LMWriteDefault(@"initialVelocity", @0.5);
-        LMWriteDefault(@"useMetalOptimization", @YES);
-        CFPreferencesAppSynchronize((__bridge CFStringRef)kPrefDomain);
-        LMReloadSettings();
-    } @catch (NSException *e) {}
-}
-
-static void LMRespringCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    exit(0);
+    } @catch (NSException *e) { NSLog(@"[LiquidMorph] Log write failed: %@", e.reason); }
+    NSLog(@"[LiquidMorph] %@", message);
 }
 
 static CGPathRef LMRoundedQuadPath(CGPoint tl, CGPoint tr, CGPoint br, CGPoint bl,
                                     CGFloat rTL, CGFloat rTR, CGFloat rBR, CGFloat rBL) {
+    NSArray *points = @[[NSValue valueWithCGPoint:tl], [NSValue valueWithCGPoint:tr],
+                         [NSValue valueWithCGPoint:br], [NSValue valueWithCGPoint:bl]];
+    NSArray *radii = @[@(rTL), @(rTR), @(rBR), @(rBL)];
     CGMutablePathRef path = CGPathCreateMutable();
-    @try {
-        CGPoint points[4] = { tl, tr, br, bl };
-        CGFloat radii[4] = { rTL, rTR, rBR, rBL };
-        
-        for (NSInteger i = 0; i < 4; i++) {
-            CGPoint cur = points[i];
-            CGPoint prev = points[(i - 1 + 4) % 4];
-            CGPoint next = points[(i + 1) % 4];
-            CGFloat r = radii[i];
-            
-            CGFloat distPrev = hypot(cur.x - prev.x, cur.y - prev.y);
-            CGFloat distNext = hypot(cur.x - next.x, cur.y - next.y);
-            CGFloat rClamped = MIN(r, MIN(distPrev, distNext) * 0.45);
-            
-            CGFloat toPrevX = (distPrev > 0) ? (prev.x - cur.x) / distPrev : 0;
-            CGFloat toPrevY = (distPrev > 0) ? (prev.y - cur.y) / distPrev : 0;
-            CGFloat toNextX = (distNext > 0) ? (next.x - cur.x) / distNext : 0;
-            CGFloat toNextY = (distNext > 0) ? (next.y - cur.y) / distNext : 0;
-            
-            CGPoint p1 = CGPointMake(cur.x + toPrevX * rClamped, cur.y + toPrevY * rClamped);
-            CGPoint p2 = CGPointMake(cur.x + toNextX * rClamped, cur.y + toNextY * rClamped);
-            
-            if (i == 0) {
-                CGPathMoveToPoint(path, NULL, p1.x, p1.y);
-            } else {
-                CGPathAddLineToPoint(path, NULL, p1.x, p1.y);
-            }
-            CGPathAddQuadCurveToPoint(path, NULL, cur.x, cur.y, p2.x, p2.y);
-        }
-        CGPathCloseSubpath(path);
-    } @catch (NSException *e) {
-        if (gAdvancedLogging) LMLog(@"Error in LMRoundedQuadPath: %@", e);
+    NSInteger n = points.count;
+    CGPoint (^getPoint)(NSInteger) = ^CGPoint(NSInteger idx) {
+        return [points[(idx + n) % n] CGPointValue];
+    };
+    for (NSInteger i = 0; i < n; i++) {
+        CGPoint cur = getPoint(i);
+        CGPoint prev = getPoint(i - 1);
+        CGPoint next = getPoint(i + 1);
+        CGFloat r = [radii[i] floatValue];
+        CGFloat distPrev = hypot(cur.x - prev.x, cur.y - prev.y);
+        CGFloat distNext = hypot(cur.x - next.x, cur.y - next.y);
+        CGFloat rClamped = MIN(r, MIN(distPrev, distNext) * 0.5);
+        CGFloat toPrevX = (prev.x - cur.x) / (distPrev > 0 ? distPrev : 1);
+        CGFloat toPrevY = (prev.y - cur.y) / (distPrev > 0 ? distPrev : 1);
+        CGFloat toNextX = (next.x - cur.x) / (distNext > 0 ? distNext : 1);
+        CGFloat toNextY = (next.y - cur.y) / (distNext > 0 ? distNext : 1);
+        CGPoint p1 = CGPointMake(cur.x + toPrevX * rClamped, cur.y + toPrevY * rClamped);
+        CGPoint p2 = CGPointMake(cur.x + toNextX * rClamped, cur.y + toNextY * rClamped);
+        if (i == 0) { CGPathMoveToPoint(path, NULL, p1.x, p1.y); }
+        else { CGPathAddLineToPoint(path, NULL, p1.x, p1.y); }
+        CGPathAddQuadCurveToPoint(path, NULL, cur.x, cur.y, p2.x, p2.y);
     }
+    CGPathCloseSubpath(path);
     return path;
 }
 
@@ -239,11 +68,12 @@ static CGFloat LMEdgeProgress(CGFloat t, CGFloat closeness, CGFloat maxDelay) {
 }
 
 static CGFloat LMHumpRadius(CGFloat t) {
-    CGFloat iconRadius = 10.0;
-    CGFloat peakRadius = gPeakRadius;
-    CGFloat endRadius = gEndRadius;
+    CGFloat iconRadius = 13.0;
+    CGFloat peakRadius = 120.0;
+    CGFloat endRadius = 20.0;
     if (t < 0.45) {
-        return iconRadius + (peakRadius - iconRadius) * (t / 0.45);
+        CGFloat local = t / 0.45;
+        return iconRadius + (peakRadius - iconRadius) * local;
     } else {
         CGFloat local = (t - 0.45) / 0.55;
         if (local > 1) local = 1;
@@ -251,64 +81,90 @@ static CGFloat LMHumpRadius(CGFloat t) {
     }
 }
 
-static UIImage *LMLoadAppSnapshot(NSString *bundleID) {
-    if (bundleID.length == 0) return nil;
-    @try {
-        NSString *dir = JB_PATH([NSString stringWithFormat:@"/var/mobile/Library/Caches/Snapshots/%@", bundleID]);
-        NSFileManager *fm = [NSFileManager defaultManager];
-        NSArray *files = [fm contentsOfDirectoryAtPath:dir error:nil];
-        if (files.count == 0) return nil;
-        for (NSString *f in files) {
-            NSString *ext = f.pathExtension.lowercaseString;
-            if ([ext isEqualToString:@"png"] || [ext isEqualToString:@"jpg"]) {
-                UIImage *img = [UIImage imageWithContentsOfFile:[dir stringByAppendingPathComponent:f]];
-                if (img) return img;
-            }
-        }
-    } @catch (NSException *e) {
-        if (gAdvancedLogging) LMLog(@"Error loading app snapshot for %@: %@", bundleID, e);
+static UIColor *LMSystemBackgroundColor(void) {
+    if (@available(iOS 13.0, *)) {
+        return [UIColor systemBackgroundColor];
     }
-    return nil;
+    return [UIColor whiteColor];
 }
 
+static UIImage *LMRenderIconImage(UIView *iconView) {
+    if (!iconView) return nil;
+    CGSize size = iconView.bounds.size;
+    if (size.width <= 0 || size.height <= 0) return nil;
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
+    format.opaque = NO;
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:size format:format];
+    return [renderer imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        [iconView.layer renderInContext:ctx.CGContext];
+    }];
+}
+
+@interface LMTransitionState : NSObject
+@property (nonatomic, strong) CALayer *backdrop;
+@property (nonatomic, strong) CAShapeLayer *maskShape;
+@property (nonatomic, strong) CALayer *iconLayer;
+@property (nonatomic, strong) CALayer *colorLayer;
+@property (nonatomic, assign) CGRect iconFrame;
+@property (nonatomic, assign) BOOL isOpening;
+@end
+@implementation LMTransitionState
+@end
+
+static LMTransitionState *gCurrentState = nil;
+static UIWindow *gOverlayWindow = nil;
+
+// Giai doan dau (0..growStart): hinh GIU NGUYEN y het icon that, dung yen,
+// khong meo khong nay. Chi sau growStart moi bat dau phong to + bien dang.
 static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL opening) {
+    CGFloat iconCenterXNorm = (iconFrame.origin.x + iconFrame.size.width / 2.0) / screen.size.width;
+    CGFloat iconCenterYNorm = (iconFrame.origin.y + iconFrame.size.height / 2.0) / screen.size.height;
+
+    CGFloat closeBottom = iconCenterYNorm;
+    CGFloat closeTop = 1.0 - iconCenterYNorm;
+    CGFloat closeRight = iconCenterXNorm;
+    CGFloat closeLeft = 1.0 - iconCenterXNorm;
+
+    NSInteger steps = 28;
     NSMutableArray *paths = [NSMutableArray array];
-    @try {
-        CGFloat iconCenterXNorm = (iconFrame.origin.x + iconFrame.size.width / 2.0) / screen.size.width;
-        CGFloat iconCenterYNorm = (iconFrame.origin.y + iconFrame.size.height / 2.0) / screen.size.height;
+    CGFloat maxDelay = 0.4;
+    CGFloat endRadius = 20.0;
+    CGFloat iconRadius = 13.0;
+    CGFloat growStart = 0.15;
 
-        CGFloat closeBottom = iconCenterYNorm;
-        CGFloat closeTop = 1.0 - iconCenterYNorm;
-        CGFloat closeRight = iconCenterXNorm;
-        CGFloat closeLeft = 1.0 - iconCenterXNorm;
+    CGFloat bounceDirection = (iconCenterYNorm > 0.5) ? -1.0 : 1.0;
+    CGFloat bounceAmount = 42.0;
 
-        NSUInteger steps = gMaxKeyframeSteps;
-        CGFloat maxDelay = 0.3;
-        CGFloat endRadius = gEndRadius;
+    CGFloat iconLeft = iconFrame.origin.x;
+    CGFloat iconRight = iconFrame.origin.x + iconFrame.size.width;
+    CGFloat iconTop = iconFrame.origin.y;
+    CGFloat iconBottom = iconFrame.origin.y + iconFrame.size.height;
+    CGFloat screenLeft = screen.origin.x;
+    CGFloat screenRight = screen.origin.x + screen.size.width;
+    CGFloat screenTop = screen.origin.y;
+    CGFloat screenBottom = screen.origin.y + screen.size.height;
 
-        CGFloat bounceDirection = (iconCenterYNorm > 0.5) ? -1.0 : 1.0;
-        CGFloat bounceAmount = gBounceAmount;
+    for (NSInteger i = 0; i <= steps; i++) {
+        CGFloat tRaw = (CGFloat)i / (CGFloat)steps;
+        CGFloat t = opening ? tRaw : (1.0 - tRaw);
 
-        CGFloat iconLeft = iconFrame.origin.x;
-        CGFloat iconRight = iconFrame.origin.x + iconFrame.size.width;
-        CGFloat iconTop = iconFrame.origin.y;
-        CGFloat iconBottom = iconFrame.origin.y + iconFrame.size.height;
-        CGFloat screenLeft = screen.origin.x;
-        CGFloat screenRight = screen.origin.x + screen.size.width;
-        CGFloat screenTop = screen.origin.y;
-        CGFloat screenBottom = screen.origin.y + screen.size.height;
+        CGPathRef p;
 
-        for (NSUInteger i = 0; i <= steps; i++) {
-            CGFloat tRaw = (CGFloat)i / (CGFloat)steps;
-            CGFloat t = opening ? tRaw : (1.0 - tRaw);
+        if (t < growStart) {
+            // Giai doan tinh: hinh = chinh xac icon, khong doi.
+            p = LMRoundedQuadPath(
+                CGPointMake(iconLeft, iconTop), CGPointMake(iconRight, iconTop),
+                CGPointMake(iconRight, iconBottom), CGPointMake(iconLeft, iconBottom),
+                iconRadius, iconRadius, iconRadius, iconRadius);
+        } else {
+            CGFloat t2 = (t - growStart) / (1.0 - growStart);
 
-            CGFloat topP = LMEdgeProgress(t, closeTop, maxDelay);
-            CGFloat bottomP = LMEdgeProgress(t, closeBottom, maxDelay);
-            CGFloat leftP = LMEdgeProgress(t, closeLeft, maxDelay);
-            CGFloat rightP = LMEdgeProgress(t, closeRight, maxDelay);
+            CGFloat topP = LMEdgeProgress(t2, closeTop, maxDelay);
+            CGFloat bottomP = LMEdgeProgress(t2, closeBottom, maxDelay);
+            CGFloat leftP = LMEdgeProgress(t2, closeLeft, maxDelay);
+            CGFloat rightP = LMEdgeProgress(t2, closeRight, maxDelay);
 
-            CGFloat dampedFactor = expf(-gDampingRatio * t) * cosf(t * (CGFloat)M_PI * 2.0);
-            CGFloat bounceEnvelope = sinf(MIN(t, 1.0) * (CGFloat)M_PI) * bounceAmount * bounceDirection * (1.0 - 0.15 * t) + (dampedFactor * 2.0 + gInitialVelocity * 0.5);
+            CGFloat bounceEnvelope = sinf(MIN(t2, 1.0) * M_PI) * bounceAmount * bounceDirection;
 
             CGFloat topY = iconTop + (screenTop - iconTop) * topP + bounceEnvelope * (1.0 - topP);
             CGFloat bottomY = iconBottom + (screenBottom - iconBottom) * bottomP + bounceEnvelope * (1.0 - bottomP);
@@ -323,175 +179,189 @@ static NSArray *LMBuildKeyframePaths(CGRect iconFrame, CGRect screen, BOOL openi
             CGPoint br = CGPointMake(bottomRightX, bottomY);
             CGPoint bl = CGPointMake(bottomLeftX, bottomY);
 
-            CGFloat humpBase = LMHumpRadius(t);
+            CGFloat humpBase = LMHumpRadius(t2);
 
             CGFloat rTL = humpBase * (1.0 - MIN(topP, leftP)) + endRadius * MIN(topP, leftP);
             CGFloat rTR = humpBase * (1.0 - MIN(topP, rightP)) + endRadius * MIN(topP, rightP);
             CGFloat rBR = humpBase * (1.0 - MIN(bottomP, rightP)) + endRadius * MIN(bottomP, rightP);
             CGFloat rBL = humpBase * (1.0 - MIN(bottomP, leftP)) + endRadius * MIN(bottomP, leftP);
 
-            CGPathRef p = LMRoundedQuadPath(tl, tr, br, bl, rTL, rTR, rBR, rBL);
-            if (p) {
-                [paths addObject:CFBridgingRelease(p)];
-            }
+            p = LMRoundedQuadPath(tl, tr, br, bl, rTL, rTR, rBR, rBL);
         }
-    } @catch (NSException *e) {
-        if (gAdvancedLogging) LMLog(@"Error building keyframe paths extended: %@", e);
+
+        [paths addObject:(__bridge_transfer id)p];
     }
     return paths;
 }
 
-static void LMCancelCurrentIfAny(void) {
-    @try {
-        if (gCurrentState && !gCurrentState.isCleanedUp) {
-            gCurrentState.isCleanedUp = YES;
-            [gCurrentState.maskShape removeAllAnimations];
-            [gCurrentState.contentLayer removeAllAnimations];
-            [gCurrentState.maskShape removeFromSuperlayer];
-            [gCurrentState.contentLayer removeFromSuperlayer];
-            gCurrentState = nil;
+static void LMForceClearOverlay(void) {
+    if (gOverlayWindow) {
+        NSArray *sublayers = [gOverlayWindow.layer.sublayers copy];
+        for (CALayer *l in sublayers) {
+            [l removeFromSuperlayer];
         }
-    } @catch (NSException *e) {
-        if (gAdvancedLogging) LMLog(@"Error cancelling current transition: %@", e);
     }
+    gCurrentState = nil;
 }
 
 static void LMEnsureWindow(void) {
-    @try {
-        if (gOverlayWindow) return;
-        gOverlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-        gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 1000;
-        gOverlayWindow.userInteractionEnabled = NO;
-        gOverlayWindow.backgroundColor = [UIColor clearColor];
-        if (gUseMetalOptimization && [gOverlayWindow respondsToSelector:@selector(layer)]) {
-            gOverlayWindow.layer.shouldRasterize = NO;
-            gOverlayWindow.layer.allowsGroupOpacity = YES;
-        }
-        if (@available(iOS 13.0, *)) {
-            for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-                if ([scene isKindOfClass:[UIWindowScene class]]) {
-                    gOverlayWindow.windowScene = (UIWindowScene *)scene;
-                    break;
-                }
+    if (gOverlayWindow) return;
+    gOverlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    gOverlayWindow.windowLevel = UIWindowLevelStatusBar + 1000;
+    gOverlayWindow.userInteractionEnabled = NO;
+    gOverlayWindow.backgroundColor = [UIColor clearColor];
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]]) {
+                gOverlayWindow.windowScene = (UIWindowScene *)scene;
+                break;
             }
         }
-        gOverlayWindow.hidden = NO;
-    } @catch (NSException *e) {
-        if (gAdvancedLogging) LMLog(@"Error ensuring overlay window: %@", e);
     }
+    gOverlayWindow.hidden = NO;
 }
 
-static void LMPlayTransition(CGRect iconFrame, NSString *bundleID, BOOL opening) {
-    @try {
-        LMCancelCurrentIfAny();
-        LMEnsureWindow();
+static void LMPlayTransition(CGRect iconFrame, UIImage *iconImage, BOOL opening) {
+    LMForceClearOverlay();
+    LMEnsureWindow();
 
-        CGRect screen = gOverlayWindow.bounds;
-        UIImage *snapshot = LMLoadAppSnapshot(bundleID);
+    CGRect screen = gOverlayWindow.bounds;
+    CGFloat duration = 0.45;
 
-        CALayer *contentLayer = [CALayer layer];
-        contentLayer.frame = screen;
-        contentLayer.contentsGravity = kCAGravityResizeAspectFill;
-        if (gUseMetalOptimization) {
-            contentLayer.drawsAsynchronously = YES;
-        }
-        if (snapshot) {
-            contentLayer.contents = (__bridge id)snapshot.CGImage;
-        } else {
-            contentLayer.backgroundColor = [UIColor colorWithWhite:0.95 alpha:1.0].CGColor;
-        }
+    CALayer *backdrop = [CALayer layer];
+    backdrop.frame = screen;
+    backdrop.backgroundColor = LMSystemBackgroundColor().CGColor;
+    [gOverlayWindow.layer addSublayer:backdrop];
 
-        CAShapeLayer *maskShape = [CAShapeLayer layer];
-        maskShape.frame = screen;
-        if (gUseMetalOptimization) {
-            maskShape.drawsAsynchronously = YES;
-        }
-        contentLayer.mask = maskShape;
-        [gOverlayWindow.layer addSublayer:contentLayer];
+    CAShapeLayer *maskShape = [CAShapeLayer layer];
+    maskShape.frame = screen;
 
-        CATransform3D initialTransform = CATransform3DIdentity;
-        CGFloat scaleX = (screen.size.width > 0) ? (iconFrame.size.width / screen.size.width) : 0.1;
-        CGFloat scaleY = (screen.size.height > 0) ? (iconFrame.size.height / screen.size.height) : 0.1;
-        CGPoint iconCenter = CGPointMake(CGRectGetMidX(iconFrame), CGRectGetMidY(iconFrame));
-        CGPoint screenCenter = CGPointMake(CGRectGetMidX(screen), CGRectGetMidY(screen));
-        
-        initialTransform = CATransform3DTranslate(initialTransform, iconCenter.x - screenCenter.x, iconCenter.y - screenCenter.y, 0);
-        initialTransform = CATransform3DScale(initialTransform, scaleX, scaleY, 1.0);
-
-        [CATransaction begin];
-        [CATransaction setAnimationDuration:gDuration];
-        [CATransaction setAnimationTimingFunction:[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut]];
-        if (opening) {
-            contentLayer.transform = CATransform3DIdentity;
-        } else {
-            contentLayer.transform = initialTransform;
-        }
-        [CATransaction commit];
-
-        NSArray *paths = LMBuildKeyframePaths(iconFrame, screen, opening);
-        if (paths.count > 0) {
-            CAKeyframeAnimation *anim = [CAKeyframeAnimation animationWithKeyPath:@"path"];
-            anim.values = paths;
-            anim.duration = gDuration;
-            anim.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
-            anim.fillMode = kCAFillModeForwards;
-            anim.removedOnCompletion = NO;
-
-            maskShape.path = (__bridge CGPathRef)paths.lastObject;
-            [maskShape addAnimation:anim forKey:@"morphExtended"];
-        }
-
-        LMTransitionState *state = [LMTransitionState new];
-        state.maskShape = maskShape;
-        state.contentLayer = contentLayer;
-        state.iconFrame = iconFrame;
-        state.bundleID = bundleID;
-        state.isOpening = opening;
-        gCurrentState = state;
-
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((gDuration + 0.15) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            @try {
-                if (gCurrentState == state && !state.isCleanedUp) {
-                    state.isCleanedUp = YES;
-                    [maskShape removeFromSuperlayer];
-                    [contentLayer removeFromSuperlayer];
-                    if (gCurrentState == state) {
-                        gCurrentState = nil;
-                    }
-                }
-            } @catch (NSException *subEx) {
-                if (gAdvancedLogging) LMLog(@"Error in cleanup block extended: %@", subEx);
-            }
-        });
-    } @catch (NSException *e) {
-        if (gAdvancedLogging) LMLog(@"Error in LMPlayTransition extended: %@", e);
+    CALayer *iconLayer = [CALayer layer];
+    iconLayer.frame = screen;
+    iconLayer.contentsGravity = kCAGravityResizeAspectFill;
+    if (iconImage) {
+        iconLayer.contents = (__bridge id)iconImage.CGImage;
+    } else {
+        iconLayer.backgroundColor = [UIColor colorWithWhite:0.85 alpha:1.0].CGColor;
     }
+    iconLayer.mask = maskShape;
+    [gOverlayWindow.layer addSublayer:iconLayer];
+
+    CAShapeLayer *maskShape2 = [CAShapeLayer layer];
+    maskShape2.frame = screen;
+    CALayer *colorLayer = [CALayer layer];
+    colorLayer.frame = screen;
+    colorLayer.backgroundColor = LMSystemBackgroundColor().CGColor;
+    colorLayer.opacity = 0.0;
+    colorLayer.mask = maskShape2;
+    [gOverlayWindow.layer addSublayer:colorLayer];
+
+    NSArray *paths = LMBuildKeyframePaths(iconFrame, screen, opening);
+
+    CAKeyframeAnimation *pathAnim = [CAKeyframeAnimation animationWithKeyPath:@"path"];
+    pathAnim.values = paths;
+    pathAnim.duration = duration;
+    pathAnim.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+    pathAnim.fillMode = kCAFillModeForwards;
+    pathAnim.removedOnCompletion = NO;
+
+    maskShape.path = (__bridge CGPathRef)paths.lastObject;
+    [maskShape addAnimation:pathAnim forKey:@"morph"];
+
+    maskShape2.path = (__bridge CGPathRef)paths.lastObject;
+    [maskShape2 addAnimation:pathAnim forKey:@"morph"];
+
+    CAKeyframeAnimation *fadeAnim = [CAKeyframeAnimation animationWithKeyPath:@"opacity"];
+    fadeAnim.values = @[@0.0, @0.0, @1.0, @1.0];
+    fadeAnim.keyTimes = @[@0.0, @0.55, @0.66, @1.0];
+    fadeAnim.duration = duration;
+    fadeAnim.fillMode = kCAFillModeForwards;
+    fadeAnim.removedOnCompletion = NO;
+
+    colorLayer.opacity = 1.0;
+    [colorLayer addAnimation:fadeAnim forKey:@"fade"];
+
+    LMTransitionState *state = [LMTransitionState new];
+    state.backdrop = backdrop;
+    state.maskShape = maskShape;
+    state.iconLayer = iconLayer;
+    state.colorLayer = colorLayer;
+    state.iconFrame = iconFrame;
+    state.isOpening = opening;
+    gCurrentState = state;
+
+    LMLog(@"Transition %@ played | frame: %@ | iconImage: %@",
+          opening ? @"OPEN" : @"CLOSE", NSStringFromCGRect(iconFrame), iconImage ? @"yes" : @"nil");
+
+    // Don dep bang thoi gian chinh xac - KHONG dung CATransaction completion
+    // block nua (khong dang tin cay trong ngu canh hook SpringBoard nay).
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((duration + 0.02) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (gCurrentState == state) {
+            [backdrop removeFromSuperlayer];
+            [iconLayer removeFromSuperlayer];
+            [colorLayer removeFromSuperlayer];
+            gCurrentState = nil;
+        }
+    });
 }
 
-// --- LOGOS HOOKS ---
+@interface SBIconView : UIView
+- (id)icon;
+@end
 
 %hook SBIconView
 
 - (void)_handleTap {
-    if (!gTweakEnabled) {
-        %orig;
-        return;
-    }
     @try {
-        id icon = nil;
-        if ([self respondsToSelector:@selector(icon)]) {
-            icon = [self icon];
+        id icon = [self valueForKey:@"icon"];
+        NSString *className = NSStringFromClass([icon class]);
+
+        BOOL isFolderLike = [className.lowercaseString containsString:@"folder"] ||
+                             [className.lowercaseString containsString:@"library"] ||
+                             [className.lowercaseString containsString:@"cluster"];
+
+        if (isFolderLike) {
+            LMLog(@"_handleTap fired NHUNG la folder/library (class: %@) - bo qua hieu ung", className);
+            %orig;
+            return;
         }
-        
-        NSString *bundleID = @"";
-        if (icon) {
-            if ([icon respondsToSelector:@selector(nodeIdentifier)]) {
-                bundleID = ((id (*)(id, SEL))objc_msgSend)(icon, @selector(nodeIdentifier)) ?: @"";
-            } else if ([icon respondsToSelector:@selector(bundleIdentifier)]) {
-                bundleID = ((id (*)(id, SEL))objc_msgSend)(icon, @selector(bundleIdentifier)) ?: @"";
-            }
-        }
+
         CGRect frameInWindow = [self.window convertRect:self.bounds fromView:self];
-        LMPlayTransition(frameInWindow, bundleID, YES);
+        UIImage *iconImage = LMRenderIconImage(self);
+        LMLog(@"_handleTap fired | class: %@ | frame: %@", className, NSStringFromCGRect(frameInWindow));
+        LMPlayTransition(frameInWindow, iconImage, YES);
     } @catch (NSException *e) {
-        if (gAdva
+        LMLog(@"Exception in _handleTap: %@", e.reason);
+    }
+    %orig;
+}
+
+%end
+
+@interface SBIconController : NSObject
+- (void)handleHomeButtonTap;
+@end
+
+%hook SBIconController
+
+- (void)handleHomeButtonTap {
+    @try {
+        LMLog(@"handleHomeButtonTap fired | hasActiveState: %d | isOpening: %d",
+              gCurrentState != nil, gCurrentState.isOpening);
+        if (gCurrentState && gCurrentState.isOpening) {
+            CGRect iconFrame = gCurrentState.iconFrame;
+            LMPlayTransition(iconFrame, nil, NO);
+        }
+    } @catch (NSException *e) {
+        LMLog(@"Exception in handleHomeButtonTap: %@", e.reason);
+    }
+    %orig;
+}
+
+%end
+
+%ctor {
+    LMLog(@"=== LiquidMorph REAL v10 loaded | process: %@ | iOS %@ ===",
+          [[NSProcessInfo processInfo] processName],
+          [[UIDevice currentDevice] systemVersion]);
+}
