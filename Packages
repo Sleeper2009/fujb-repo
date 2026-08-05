@@ -31,7 +31,7 @@ Description: Cho phép cài hình nền lật thẻ Origin OS trên iPhone
 Package: Saily VH(Roothide)
 Name: Saily VH(Roothide)
 Version: 1.0.0
-Architecture: iphoneos-arm64
+Architecture: iphoneos-arm64.roothide
 Maintainer: 
 Filename: Saily_1.0.0.deb
 Section: Tweaks
