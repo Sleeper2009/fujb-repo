@@ -37,5 +37,5 @@ Architecture: iphoneos-arm64
 Maintainer: 
 Filename: vivostyle_rootless.deb
 Section: Tweaks
-Size: 13309788
+Size: 30270
 Description: Cho phép cài hình nền lật thẻ Origin OS trên iPhone
