@@ -28,3 +28,14 @@ Section: Tweaks
 Size: 13309788
 Description: o2pro việt hoá 
 
+vivostyle_rootless.deb
+
+Package: VivoStyle
+Name: VivoStyle
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Maintainer: 
+Filename: vivostyle_rootless.deb
+Section: Tweaks
+Size: 13309788
+Description: Cho phép cài hình nền lật thẻ Origin OS trên iPhone
