@@ -1,13 +1,3 @@
-Package: Liquid Morph 
-Name: Liquid Morph
-Version: 0.1
-Architecture: iphoneos-arm64
-Maintainer: Sleeper2009
-Filename: ./com.furina.liquidmorph_0.1_iphoneos-arm64.deb
-Section: Tweaks
-Size: 14242
-Description: Animation IOS 26 Demo
-
 Package: com.furina.liquidsiri
 Name: Liquid Siri
 Version: 1.1.0
@@ -27,8 +17,6 @@ Filename: o2proVH.deb
 Section: Tweaks
 Size: 13309788
 Description: o2pro việt hoá 
-
-vivostyle_rootless.deb
 
 Package: VivoStyle
 Name: VivoStyle
