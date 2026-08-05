@@ -27,13 +27,3 @@ Filename: vivostyle_rootless.deb
 Section: Tweaks
 Size: 30270
 Description: Cho phép cài hình nền lật thẻ Origin OS trên iPhone
-
-Package: Saily VH(Roothide)
-Name: Saily VH(Roothide)
-Version: 1.0.0
-Architecture: iphoneos-arm64.roothide
-Maintainer: 
-Filename: Saily_1.0.0.deb
-Section: Tweaks
-Size: 3369368
-Description: Trình quản lí gói Saily với các tính năng mới. Nổi bật với các tính năng: áp dụng tweak mà không cần springboard, dọn dẹp các nguồn lỗi, giao diện đơn giản và hiện đại và nhiều tính năng khác
