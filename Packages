@@ -10,13 +10,13 @@ Description: Giao diện Siri ios 27
 
 Package: Liquid Morph
 Name: Liquid Morph
-Version: 0.1.0
+Version: 0.1.5
 Architecture: iphoneos-arm64
 Maintainer: 
-Filename: com.liquid.morph_0.1.0_iphoneos-arm64.deb
+Filename: com.liquid.morph_0.1.5_iphoneos-arm64.deb
 Section: Tweaks
-Size: 16672
-Description: Thiết kế giai diện iOS phong cách Liquid Morph và HyperOS 4(Beta)
+Size: 24644
+Description: Thiết kế giai diện iOS phong cách Liquid Morph và HyperOS 4)
 
 Package: o2proVH.deb
 Name: o2Pro(VH) 
